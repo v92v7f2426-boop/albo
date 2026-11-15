@@ -164,7 +164,11 @@ private fun AlboApp(context: android.content.Context) {
         ReportEditorDialog(repository, reportJobID, pendingSpokenText,
             onDismiss = { showReportEditor = false; pendingSpokenText = "" },
             onSpeak = { pendingSpokenText = ""; try { speech.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply { putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM); putExtra(RecognizerIntent.EXTRA_LANGUAGE, "de-DE"); putExtra(RecognizerIntent.EXTRA_PROMPT, "Bericht diktieren") }) } catch (_: Exception) { scope.launch { snack.showSnackbar("Spracherkennung ist auf diesem Gerät nicht verfügbar.") } } },
-            onSave = { jobID, title, text, notes, materials, checks, customer, workerSignature, customerSignature -> repository.addReport(jobID, title, text, notes, materials, checks, customer, workerSignature, customerSignature); revision++; showReportEditor = false; pendingSpokenText = "" })
+            onSave = { jobID, title, text, notes, materials, checks, customer, workerSignature, customerSignature ->
+                repository.addReport(jobID, title, text, notes, materials, checks, customer, workerSignature, customerSignature)
+                revision++; showReportEditor = false; pendingSpokenText = ""
+                scope.launch { try { val result = repository.synchronize(); syncMessage = result; revision++; snack.showSnackbar("Bericht gespeichert und mit dem PC abgeglichen.") } catch (e: Exception) { snack.showSnackbar("Bericht bleibt auf dem Handy gespeichert. PC-Abgleich noch offen: ${e.message ?: "Verbindung nicht erreichbar"}") } }
+            })
     }
 }
 
