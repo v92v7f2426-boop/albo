@@ -341,13 +341,13 @@ private fun MoreScreen(repo: AlboRepository, revision: Int, server: String, toke
         Text("Mehr", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("PC-Verbindung", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Im selben WLAN: PC-IP mit Port 8787. Von unterwegs: NetBird auf PC und Handy verbinden und die NetBird-IP des PCs mit Port 8788 eintragen. Den Mitarbeiter-Kopplungsschlüssel aus der PC-Verwaltung ergänzen. Die Synchronisierung wird manuell gestartet.", style = MaterialTheme.typography.bodySmall)
+            Text("Von unterwegs NetBird auf PC und Handy verbinden. Für Mitarbeiterkonto-Anmeldung die NetBird-IP des PCs mit Port 8788 eintragen. Alternativ ist eine Anmeldung über einen Gerätekopplungsschlüssel möglich.", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(server, onServer, label = { Text("PC-Adresse, z. B. http://100.80.10.20:8788") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
             Text("Mitarbeiterkonto", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Text("Melde dich mit dem Benutzernamen und Passwort an, die in der PC-Verwaltung für dich angelegt wurden. Die Anmeldung benötigt NetBird und die Serveradresse mit Port 8788.", style = MaterialTheme.typography.bodySmall)
+            Text("Melde dich mit dem Benutzernamen und Passwort an, die in der PC-Verwaltung für dich angelegt wurden. Damit wechselst du vom bisher verbundenen Mitarbeiterkonto auf dein eigenes. Voraussetzung: Der bisherige Datenstand ist synchronisiert. Die Anmeldung benötigt NetBird und Port 8788.", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(username, onLoginUsername, label = { Text("Benutzername") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
             OutlinedTextField(password, onLoginPassword, label = { Text("Passwort") }, modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation())
-            Button(onClick = onLogin, enabled = !syncBusy && server.isNotBlank() && username.isNotBlank() && password.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text(if (syncBusy) "Bitte warten …" else "Mit Mitarbeiterkonto anmelden") }
+            Button(onClick = onLogin, enabled = !syncBusy && server.isNotBlank() && username.isNotBlank() && password.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text(if (syncBusy) "Bitte warten …" else "Mitarbeiterkonto anmelden / wechseln") }
             if (repo.root.optJSONObject("identity") != null) Text("Angemeldet: ${repo.root.optJSONObject("identity")?.optString("username") ?: repo.employee}", color = BrandBlue, fontWeight = FontWeight.SemiBold)
             Text("Alternative: Gerätekopplungsschlüssel", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             OutlinedTextField(token, onToken, label = { Text("Kopplungsschlüssel") }, modifier = Modifier.fillMaxWidth(), singleLine = true)

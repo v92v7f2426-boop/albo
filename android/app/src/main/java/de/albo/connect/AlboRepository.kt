@@ -73,7 +73,15 @@ class AlboRepository(context: Context) {
     var root: JSONObject = vault.read()
         private set
     val database: JSONObject get() = root.getJSONObject("database")
-    val employee: String get() = database.optString("employee", "Salvatore Albo")
+    val employee: String get() {
+        val identity = root.optJSONObject("identity")
+        val employeeID = identity?.optString("employeeID").orEmpty()
+        if (employeeID.isNotBlank() && employeeID != "null") {
+            (0 until database.array("employees").length()).mapNotNull { database.optJSONArray("employees")?.optJSONObject(it) }
+                .firstOrNull { it.optString("id").equals(employeeID, true) }?.optString("name")?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        return database.optString("employee", "Salvatore Albo")
+    }
     val canManage: Boolean get() = root.optJSONObject("identity")?.optString("role") != "worker"
     val jobs: JSONArray get() = database.array("jobs")
     val entries: JSONArray get() = database.array("entries")
@@ -106,8 +114,16 @@ class AlboRepository(context: Context) {
         val oldIdentity = root.optJSONObject("identity")
         val oldEmployeeID = oldIdentity?.optString("employeeID").orEmpty()
         val newEmployeeID = identity.optString("employeeID")
-        val hasLocalWork = listOf("reports", "entries", "absences", "overtimeUses").any { database.array(it).length() > 0 } || database.objectValue("clocks").length() > 0
-        if (oldEmployeeID.isNotBlank() && !oldEmployeeID.equals(newEmployeeID, true) && hasLocalWork) error("Auf diesem Handy sind noch lokale Daten eines anderen Mitarbeiters. Bitte zuerst mit dessen Konto synchronisieren, bevor du das Konto wechselst.")
+        val switchingEmployee = oldIdentity != null && !oldEmployeeID.equals(newEmployeeID, true)
+        if (switchingEmployee) {
+            val baseline = root.optJSONObject("sync")?.optString("baseline").orEmpty()
+            if (baseline.isBlank() || baseline != database.toString()) error("Der bisherige Mitarbeiter hat noch nicht synchronisierte Daten. Bitte zuerst mit dem bisherigen Konto abgleichen; danach kannst du das Konto wechseln.")
+            val cleanDatabase = JSONObject()
+            listOf("jobs", "reports", "entries", "templates", "employees", "customers", "appointments", "materials", "services", "checklists", "absences", "overtimeUses").forEach { cleanDatabase.put(it, JSONArray()) }
+            cleanDatabase.put("clocks", JSONObject()).put("employee", "")
+            root.put("database", cleanDatabase)
+            root.put("sync", JSONObject())
+        }
         root.put("connection", JSONObject().put("server", server.toString().trimEnd('/')).put("token", token))
         root.put("identity", identity)
         commit()
@@ -160,21 +176,28 @@ class AlboRepository(context: Context) {
             val hasLocalWork = listOf("jobs", "reports", "entries", "customers", "absences", "overtimeUses").any { database.array(it).length() > 0 } || database.objectValue("clocks").length() > 0
             if (hasLocalWork) error("Auf diesem Gerät gibt es noch keinen PC-Ausgangsstand. Sichere die lokalen Daten und führe den ersten Abgleich mit einem leeren Mitarbeitergerät durch.")
             root.put("database", remoteDb)
+            remote.optJSONObject("identity")?.let { identity ->
+                root.put("identity", identity)
+                val employeeID = identity.optString("employeeID")
+                val employee = remoteDb.optJSONArray("employees")?.let { employees -> (0 until employees.length()).mapNotNull { employees.optJSONObject(it) }.firstOrNull { it.optString("id").equals(employeeID, true) } }
+                    ?: remoteDb.optJSONArray("employees")?.optJSONObject(0)
+                employee?.optString("name")?.takeIf { it.isNotBlank() }?.let { remoteDb.put("employee", it) }
+            }
             root.put("sync", JSONObject().put("workspaceID", remote.getString("workspaceID")).put("revision", remote.getInt("revision")).put("proof", remote.optString("proof")).put("baseline", remoteDb.toString()))
-            remote.optJSONObject("identity")?.let { root.put("identity", it) }
-            remoteDb.optJSONArray("employees")?.optJSONObject(0)?.optString("name")?.takeIf { it.isNotBlank() }?.let { root.getJSONObject("database").put("employee", it) }
             vault.write(root)
             return@withContext "Erster Abgleich abgeschlossen. Die PC-Daten wurden geladen."
         }
         val updated = request("sync", "POST", payload)
         val updatedDb = updated.getJSONObject("backup").getJSONObject("database")
         root.put("database", updatedDb)
-        root.put("sync", JSONObject().put("workspaceID", updated.getString("workspaceID")).put("revision", updated.getInt("revision")).put("proof", updated.optString("proof")).put("baseline", updatedDb.toString()))
         updated.optJSONObject("identity")?.let { identity ->
             root.put("identity", identity)
-            val employees = updatedDb.optJSONArray("employees")
-            employees?.optJSONObject(0)?.optString("name")?.takeIf { it.isNotBlank() }?.let { updatedDb.put("employee", it) }
+            val employeeID = identity.optString("employeeID")
+            val employee = updatedDb.optJSONArray("employees")?.let { employees -> (0 until employees.length()).mapNotNull { employees.optJSONObject(it) }.firstOrNull { it.optString("id").equals(employeeID, true) } }
+                ?: updatedDb.optJSONArray("employees")?.optJSONObject(0)
+            employee?.optString("name")?.takeIf { it.isNotBlank() }?.let { updatedDb.put("employee", it) }
         }
+        root.put("sync", JSONObject().put("workspaceID", updated.getString("workspaceID")).put("revision", updated.getInt("revision")).put("proof", updated.optString("proof")).put("baseline", updatedDb.toString()))
         vault.write(root)
         "Synchronisiert · Stand ${updated.optInt("revision")}"
     }
