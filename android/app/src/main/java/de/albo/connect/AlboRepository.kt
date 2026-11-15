@@ -22,7 +22,7 @@ private const val SWIFT_EPOCH = 978307200L
 private fun id() = UUID.randomUUID().toString().uppercase()
 private fun JSONObject.copyObject() = JSONObject(toString())
 private fun JSONObject.array(name: String) = optJSONArray(name) ?: JSONArray().also { put(name, it) }
-private fun JSONObject.objectValue(name: String) = optJSONObject(name) ?: JSONObject().also { put(name, it) }
+internal fun JSONObject.objectValue(name: String) = optJSONObject(name) ?: JSONObject().also { put(name, it) }
 
 class LocalVault(context: Context) {
     private val file = File(context.filesDir, "albo-local.enc")
