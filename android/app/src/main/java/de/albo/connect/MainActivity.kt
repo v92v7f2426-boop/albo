@@ -259,8 +259,8 @@ private fun MoreScreen(repo: AlboRepository, revision: Int, server: String, toke
         Text("Mehr", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("PC-Verbindung", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Adresse und einmaligen Mitarbeiter-Kopplungsschlüssel aus der PC-Verwaltung eintragen. Arbeitsdaten bleiben lokal verfügbar und werden bei Verbindung abgeglichen.", style = MaterialTheme.typography.bodySmall)
-            OutlinedTextField(server, onServer, label = { Text("PC-Adresse, z. B. https://…") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            Text("Im selben WLAN: PC-IP mit Port 8787. Von unterwegs: NetBird auf PC und Handy verbinden und die NetBird-IP des PCs mit Port 8788 eintragen. Den Mitarbeiter-Kopplungsschlüssel aus der PC-Verwaltung ergänzen. Die Synchronisierung wird manuell gestartet.", style = MaterialTheme.typography.bodySmall)
+            OutlinedTextField(server, onServer, label = { Text("PC-Adresse, z. B. http://100.80.10.20:8788") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
             OutlinedTextField(token, onToken, label = { Text("Kopplungsschlüssel") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onSave) { Text("Verbindung speichern") }

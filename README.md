@@ -17,7 +17,7 @@ Im Quellcode umgesetzt:
 - Kunden-, Mitarbeiter- und Vorlagenverwaltung auf dem Gerät, mit breiter Ansicht auf dem iPad.
 - Datensicherung und Wiederherstellung einschließlich Fotoanhängen und Unterschriften.
 
-Zusätzlich ist eine **echte lokale PC-Verwaltung** im Ordner `pc` enthalten. Speicherung, Geräte-Kopplung, Mitarbeiterberechtigungen, Widerruf von Gerätezugängen und das Zusammenführen paralleler Änderungen wurden unter Windows getestet. Der dazugehörige native iPhone-Abgleich ist kompiliert; der vollständige Netzwerkabgleich mit einem echten iPhone ist noch nicht geprüft. Es handelt sich um eine manuell ausgelöste Synchronisierung, keine laufende Cloud-Verbindung.
+Zusätzlich ist eine **echte lokale PC-Verwaltung** im Ordner `pc` enthalten. Speicherung, Geräte-Kopplung, Mitarbeiterberechtigungen, Widerruf von Gerätezugängen und das Zusammenführen paralleler Änderungen wurden unter Windows getestet. Der native Android- und iPhone-Abgleich ist kompiliert; der vollständige Netzwerkabgleich mit einem echten Mobilgerät ist noch nicht geprüft. Es handelt sich um eine manuell ausgelöste Synchronisierung, keine laufende Cloud-Verbindung.
 
 ## PC-Verwaltung jetzt unter Windows testen
 
@@ -39,9 +39,9 @@ node pc/server.mjs --open
 
 Die Symbole sind lokal mitgeliefert; die PC-Oberfläche braucht kein externes CDN. Die Lizenz liegt unter `pc/vendor/LUCIDE-LICENSE.txt`.
 
-## iPhone mit dem PC verbinden — Gerätetest noch offen
+## Mobilgerät mit dem PC verbinden — Gerätetest noch offen
 
-Für den Zugriff über Mobilfunk von Baustellen aus ist der private NetBird-Modus für 1–5 Personen vorbereitet. Einstieg: **[BAUSTELLEN-ZUGRIFF.md](BAUSTELLEN-ZUGRIFF.md)**. Er trennt die lokale PC-Verwaltung von einem ausschließlich mit Kopplungsschlüssel erreichbaren Datenendpunkt. NetBird-Installation, Kontoanmeldung und echter Mobilfunktest sind noch offen.
+Für den Zugriff über Mobilfunk oder fremdes WLAN ist der private NetBird-Modus für 1–5 Personen vorbereitet. Einstieg: **[BAUSTELLEN-ZUGRIFF.md](BAUSTELLEN-ZUGRIFF.md)**. Er trennt die lokale PC-Verwaltung von einem ausschließlich mit Kopplungsschlüssel erreichbaren Datenendpunkt. NetBird-Installation, Kontoanmeldung und echter Mobilfunktest sind noch offen. Die Android-App benötigt NetBird auf Handy und PC; bei verbundenem VPN wird in **Mehr → PC-Verbindung** die NetBird-IP des PCs mit Port `8788` eingetragen.
 
 Für den regulären Netzwerkbetrieb unterstützt der Server HTTPS mit einem vertrauenswürdigen Zertifikat. Die Dateipfade werden über `ALBO_TLS_KEY` und `ALBO_TLS_CERT` gesetzt; anschließend den Server mit `--lan` starten. Diese Einrichtung verändert weder Firewall noch Router automatisch.
 

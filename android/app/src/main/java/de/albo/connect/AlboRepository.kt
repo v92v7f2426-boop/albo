@@ -91,8 +91,10 @@ class AlboRepository(context: Context) {
         require(url.userInfo == null && url.query == null && url.ref == null) { "Bitte nur eine Serveradresse ohne Zugangsdaten oder Zusatzparameter eingeben." }
         if (url.protocol == "https") return url
         val parts = host.split('.').mapNotNull { it.toIntOrNull() }
-        val privateAddress = parts.size == 4 && parts.all { it in 0..255 } && (parts[0] == 10 || parts[0] == 127 || (parts[0] == 192 && parts[1] == 168) || (parts[0] == 172 && parts[1] in 16..31))
-        require(url.protocol == "http" && (host == "localhost" || host.endsWith(".local") || privateAddress)) { "Unverschlüsseltes HTTP ist nur für lokale Testadressen erlaubt. Im regulären Netzwerkbetrieb HTTPS verwenden." }
+        val validIPv4 = parts.size == 4 && parts.all { it in 0..255 }
+        val privateAddress = validIPv4 && (parts[0] == 10 || parts[0] == 127 || (parts[0] == 192 && parts[1] == 168) || (parts[0] == 172 && parts[1] in 16..31))
+        val netBirdAddress = validIPv4 && parts[0] == 100 && parts[1] in 64..127
+        require(url.protocol == "http" && (host == "localhost" || host.endsWith(".local") || privateAddress || netBirdAddress)) { "Unverschlüsseltes HTTP ist nur für lokale Testadressen oder innerhalb des privaten NetBird-VPN erlaubt. Im regulären Netzwerkbetrieb HTTPS verwenden." }
         return url
     }
     suspend fun synchronize(): String = withContext(Dispatchers.IO) {
