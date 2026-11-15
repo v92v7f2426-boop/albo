@@ -125,6 +125,17 @@ private fun AlboApp(context: android.content.Context) {
     val snack = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { while (true) { delay(1000); clockTick++ } }
+    LaunchedEffect(repository) {
+        while (true) {
+            delay(15000)
+            if (repository.hasPendingSync && !syncBusy && repository.root.optJSONObject("connection") != null) {
+                syncBusy = true
+                try { syncMessage = repository.synchronize(); revision++ }
+                catch (e: Exception) { syncMessage = "Abgleich wartet auf PC-Verbindung: ${e.message ?: "Server nicht erreichbar"}" }
+                finally { syncBusy = false }
+            }
+        }
+    }
     val tabs = listOf("Start", "Baustellen", "Berichte", "Zeiten", "Archiv", "Mehr")
     val icons = listOf(Icons.Default.Home, Icons.Default.Build, Icons.Default.Assignment, Icons.Default.PlayArrow, Icons.Default.Archive, Icons.Default.MoreHoriz)
     MaterialTheme(colorScheme = MaterialTheme.colorScheme.copy(primary = BrandBlue, secondary = BrandBlue, background = PageBackground)) {
@@ -167,7 +178,7 @@ private fun AlboApp(context: android.content.Context) {
             onSave = { jobID, title, text, notes, materials, checks, customer, workerSignature, customerSignature ->
                 repository.addReport(jobID, title, text, notes, materials, checks, customer, workerSignature, customerSignature)
                 revision++; showReportEditor = false; pendingSpokenText = ""
-                scope.launch { try { val result = repository.synchronize(); syncMessage = result; revision++; snack.showSnackbar("Bericht gespeichert und mit dem PC abgeglichen.") } catch (e: Exception) { snack.showSnackbar("Bericht bleibt auf dem Handy gespeichert. PC-Abgleich noch offen: ${e.message ?: "Verbindung nicht erreichbar"}") } }
+                scope.launch { syncBusy = true; try { val result = repository.synchronize(); syncMessage = result; revision++; snack.showSnackbar("Bericht gespeichert und mit dem PC abgeglichen.") } catch (e: Exception) { syncMessage = "Abgleich ausstehend: ${e.message ?: "Verbindung nicht erreichbar"}"; snack.showSnackbar("Bericht bleibt auf dem Handy gespeichert. PC-Abgleich noch offen: ${e.message ?: "Verbindung nicht erreichbar"}") } finally { syncBusy = false } }
             })
     }
 }

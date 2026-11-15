@@ -83,10 +83,11 @@ class AlboRepository(context: Context) {
         return database.optString("employee", "Salvatore Albo")
     }
     val canManage: Boolean get() = root.optJSONObject("identity")?.optString("role") != "worker"
+    val hasPendingSync: Boolean get() = root.optBoolean("pendingSync", false)
     val jobs: JSONArray get() = database.array("jobs")
     val entries: JSONArray get() = database.array("entries")
     val reports: JSONArray get() = database.array("reports")
-    private fun commit() { vault.write(root) }
+    private fun commit() { root.put("pendingSync", true); vault.write(root) }
     fun saveConnection(server: String, token: String) {
         validateServer(server)
         require(token.length == 64 && token.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }) { "Der Kopplungsschlüssel muss 64 Hex-Zeichen enthalten." }
@@ -184,6 +185,7 @@ class AlboRepository(context: Context) {
                 employee?.optString("name")?.takeIf { it.isNotBlank() }?.let { remoteDb.put("employee", it) }
             }
             root.put("sync", JSONObject().put("workspaceID", remote.getString("workspaceID")).put("revision", remote.getInt("revision")).put("proof", remote.optString("proof")).put("baseline", remoteDb.toString()))
+            root.put("pendingSync", false)
             vault.write(root)
             return@withContext "Erster Abgleich abgeschlossen. Die PC-Daten wurden geladen."
         }
@@ -198,6 +200,7 @@ class AlboRepository(context: Context) {
             employee?.optString("name")?.takeIf { it.isNotBlank() }?.let { updatedDb.put("employee", it) }
         }
         root.put("sync", JSONObject().put("workspaceID", updated.getString("workspaceID")).put("revision", updated.getInt("revision")).put("proof", updated.optString("proof")).put("baseline", updatedDb.toString()))
+        root.put("pendingSync", false)
         vault.write(root)
         "Synchronisiert · Stand ${updated.optInt("revision")}"
     }
