@@ -225,7 +225,7 @@ private fun JobsScreen(repo: AlboRepository, revision: Int, tick: Int, archivedI
                             val runningHere = clock != null && clock.optString("jobID") == id && clock.has("segmentStart")
                             Button(onClick = { try { if (clock != null && clock.optString("jobID") == id && !clock.has("segmentStart")) repo.start(id) else if (clock == null || clock.optString("jobID") != id) repo.start(id); onRefresh() } catch (e: Exception) { onError(e.message ?: "Arbeitszeit konnte nicht gestartet werden.") } }, enabled = !runningHere) { Text(if (clock?.optString("jobID") == id) "Weiterarbeiten" else "Hier starten") }
                             OutlinedButton(onClick = { onOpenReport(id) }) { Text("Bericht schreiben") }
-                        } else OutlinedButton(onClick = { onOpenReport(id) }) { Text("Berichte zum Projekt") }
+                        } else OutlinedButton(onClick = { onNavigate(2) }) { Text("Berichte öffnen") }
                         if (repo.canManage && !archived) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(onClick = { try { repo.completeJob(id); onRefresh() } catch (e: Exception) { onError(e.message ?: "Projekt konnte nicht abgeschlossen werden.") } }) { Text("Projekt abschließen") }
                             TextButton(onClick = { deleteID = id }) { Text("Projekt löschen") }
