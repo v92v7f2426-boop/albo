@@ -96,7 +96,7 @@ import UIKit
         next.employees = list; return commit(next)
     }
     func save(customer: Customer) -> Bool {
-        guard requireManagement() else { return false }
+        guard canManage || !customers.contains(where: { $0.id == customer.id }) else { error = "Mitarbeiter dürfen Kunden anlegen, bestehende Kundendaten kann nur die Geschäftsführung bearbeiten."; return false }
         guard !customers.contains(where: { $0.id != customer.id && $0.name == customer.name }) else { error = "Dieser Kunde existiert bereits."; return false }
         var next = data; var list = customers
         if let i = list.firstIndex(where: { $0.id == customer.id }) {

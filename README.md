@@ -1,4 +1,4 @@
-# ALBO Connect für iPhone und iPad
+# ALBO Connect für iPhone, iPad und Android
 
 Dieses Paket enthält den nativen SwiftUI-Quellcode und das Xcode-Projekt nach deiner Bildvorlage. Der GitHub-Build vom 9. November 2026 war erfolgreich: sieben native Tests und sieben Server-Tests bestanden; eine echte arm64-Geräte-IPA wurde erstellt. **Die IPA ist noch unsigniert und lässt sich ohne eigene Apple-Signierung nicht direkt auf einem normalen iPhone installieren.** Bedienung, Spracheingabe und Netzwerkabgleich auf einem echten Gerät bleiben zu prüfen.
 
@@ -7,7 +7,7 @@ Im Quellcode umgesetzt:
 - Startseite mit ALBO-Logo, sechs Kacheln und unterer Navigation.
 - Baustellen anlegen, bearbeiten und Kunden zuordnen.
 - Arbeitszeiten pro Mitarbeiter starten, pausieren, fortsetzen und beenden; lokale Speicherung über App-Neustarts. Nettozeit und tatsächliches Ende werden getrennt gespeichert.
-- Berichte manuell oder mit eigenen Vorlagen schreiben; Entwürfe speichern und Berichte abschließen.
+- Berichte manuell oder mit Vorlagen schreiben; Diktat und professionelle Formulierung auf dem iPhone nutzen; interne Notizen bleiben im Team und erscheinen nicht im Kunden-PDF; digitale Unterschriften von Kunde und Monteur.
 - Mikrofon-Diktat über die Apple-Spracherkennung, mit Berechtigungsabfrage und Behandlung fehlender Verfügbarkeit. Je Aufnahme maximal 55 Sekunden; weitere Aufnahmen können angehängt werden.
 - Lokale KI-Formulierung mit Apple Foundation Models, falls Apple Intelligence auf dem Gerät verfügbar ist. Ohne lokale KI bleibt der diktierte Text bearbeitbar. KI-Ergebnisse müssen vor der Freigabe geprüft werden.
 - Fotos aus der Fotomediathek und von der Kamera, mit Bildbeschreibungen und Zuordnung zum Bericht.
@@ -24,9 +24,12 @@ Zusätzlich ist eine **echte lokale PC-Verwaltung** im Ordner `pc` enthalten. Sp
 1. Das komplette ZIP entpacken.
 2. Im Unterordner `pc` die Datei **Start-Windows.cmd** doppelklicken. Sie nutzt eine vorhandene Node.js-Installation oder die vorhandene Codex-Node-Laufzeit. Andernfalls wird Node.js 22 oder neuer benötigt.
 3. Das Konsolenfenster offen lassen. Die Verwaltung öffnet sich im Browser unter `http://localhost:8787`.
-4. **Lokale Verwaltung öffnen** anklicken. Diese Anmeldung funktioniert nur direkt auf diesem PC über localhost.
-5. Baustellen, Kunden, Mitarbeiter, eigene Vorlagen und Berichte anlegen. Änderungen bleiben nach einem Server-Neustart erhalten. Der Datenordner ist `pc/data`; dort werden keine Beispieldaten vorausgesetzt.
-6. Berichte über **PDF / Drucken** in der Druckansicht öffnen und im Browser als PDF speichern.
+4. Beim ersten Öffnen ein Administratorkonto mit eigenem Benutzernamen und mindestens 12 Zeichen langem Passwort anlegen. Dieses erste Konto kann nur direkt auf dem PC über localhost erstellt werden.
+5. Mit dem Administratorkonto anmelden. Unter **Benutzer** weitere Konten erstellen, als **Verwaltung** oder **Mitarbeiter** einordnen und Mitarbeiterkonten einem aktiven Mitarbeiter zuweisen. Konten können bearbeitet, deaktiviert und mit einem neuen Passwort versehen werden. Mindestens ein aktives Administratorkonto muss bestehen bleiben.
+6. Baustellen, Kunden, Mitarbeiter, eigene Vorlagen und Berichte anlegen. Unter **Datensicherung** lässt sich außerdem ein eigenes Logo als PNG, JPG oder WebP (bis 10 MB) hochladen. Den gewünschten Ausschnitt aufziehen und speichern; das Bild oben links in der PC-Verwaltung wird dadurch ersetzt. Änderungen bleiben nach einem Server-Neustart erhalten. Der Datenordner ist `pc/data`; dort werden keine Beispieldaten vorausgesetzt.
+7. Berichte über **PDF / Drucken** in der Druckansicht öffnen und im Browser als PDF speichern.
+
+Passwörter werden nicht im Klartext gespeichert. Nach acht fehlgeschlagenen Anmeldeversuchen von einer Adresse wird die Anmeldung dort für 15 Minuten gesperrt. Mitarbeiterkonten können in der PC-Verwaltung nur Berichte und Arbeitszeiten bearbeiten; Stammdaten und Benutzer verwaltet ein Administratorkonto.
 
 Alternativ im Terminal:
 
@@ -37,6 +40,8 @@ node pc/server.mjs --open
 Die Symbole sind lokal mitgeliefert; die PC-Oberfläche braucht kein externes CDN. Die Lizenz liegt unter `pc/vendor/LUCIDE-LICENSE.txt`.
 
 ## iPhone mit dem PC verbinden — Gerätetest noch offen
+
+Für den Zugriff über Mobilfunk von Baustellen aus ist der private NetBird-Modus für 1–5 Personen vorbereitet. Einstieg: **[BAUSTELLEN-ZUGRIFF.md](BAUSTELLEN-ZUGRIFF.md)**. Er trennt die lokale PC-Verwaltung von einem ausschließlich mit Kopplungsschlüssel erreichbaren Datenendpunkt. NetBird-Installation, Kontoanmeldung und echter Mobilfunktest sind noch offen.
 
 Für den regulären Netzwerkbetrieb unterstützt der Server HTTPS mit einem vertrauenswürdigen Zertifikat. Die Dateipfade werden über `ALBO_TLS_KEY` und `ALBO_TLS_CERT` gesetzt; anschließend den Server mit `--lan` starten. Diese Einrichtung verändert weder Firewall noch Router automatisch.
 
@@ -92,6 +97,11 @@ Apple beschreibt die notwendigen Signierungs- und Geräteprofile unter [Distribu
 
 Siehe `STATUS.md`. Apple-Build und Logiktests sind nachgewiesen. Apple-Signierung, Installation, echte Gerätetests, ein visueller Vergleich auf iPhone/iPad und der vollständige Abgleich zwischen echten iPhones und PC sind noch offen.
 
-Die Grafik `Reference.imageset/reference.png` ist die vom Nutzer bereitgestellte Bildvorlage. Die App zeigt daraus den Logo-Ausschnitt. Für eine scharfe Produktionsdarstellung kann dieser später durch die originale Logodatei ersetzt werden.
+Die Grafik `Reference.imageset/reference.png` ist die Bildvorlage der nativen iPhone-App. Die PC-Verwaltung kann unabhängig davon ein eigenes Logo für die Seitenleiste verwenden.
 
 Technische Grundlage: [Apple-Spracherkennung](https://developer.apple.com/documentation/speech/sfspeechaudiobufferrecognitionrequest), [Apple Foundation Models und Verfügbarkeitsprüfung](https://developer.apple.com/documentation/foundationmodels/systemlanguagemodel).
+## Android-App
+
+Unter `android` liegt die eigenständige Kotlin-/Jetpack-Compose-App für Android. Sie speichert lokale Daten verschlüsselt im privaten App-Speicher und funktioniert für Baustellen, Stempeln und Berichtsentwürfe auch offline. Spracheingabe läuft über die Android-Spracherkennung. Die PC-Verbindung übernimmt den Mitarbeiter-Kopplungsschlüssel und gleicht Änderungen über denselben Server-Endpunkt wie die iPhone-App ab.
+
+Auf diesem Windows-PC ist kein Android-SDK installiert. Zum Öffnen `android` in Android Studio laden und dort Gradle synchronisieren. Für einen APK-Build ist der Workflow **Android App Build** unter GitHub Actions eingerichtet; er erzeugt eine Debug-APK als herunterladbares Artefakt. Für Verteilung außerhalb interner Tests ist danach ein eigener Release-/Signierungsprozess einzurichten.

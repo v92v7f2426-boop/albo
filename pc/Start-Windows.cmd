@@ -13,6 +13,7 @@ if errorlevel 1 (
   )
 )
 echo ALBO Connect wird gestartet. Dieses Fenster offen lassen.
+echo App-Ordner: %CD%
 echo Zum Beenden Strg+C druecken oder das Fenster schliessen.
 "%ALBO_NODE%" "%~dp0server.mjs" --open
 if errorlevel 1 pause

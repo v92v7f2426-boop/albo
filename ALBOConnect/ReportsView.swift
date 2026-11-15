@@ -28,11 +28,13 @@ struct ReportEditor: View {
     @EnvironmentObject private var store: Store
     @Environment(\.dismiss) private var dismiss
     @State var report: Report
+    @StateObject private var speech = SpeechService()
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var takingPhoto = false
     @State private var addingMeasurement = false
     @State private var addingJob = false
     @State private var loadingPhotos = false
+    @State private var rewritingSentence = false
     var body: some View {
         Form {
             if store.data.jobs.isEmpty {
@@ -48,6 +50,23 @@ struct ReportEditor: View {
                     Menu("Vorlage einsetzen") { ForEach(store.data.templates) { template in Button(template.name) { report.text = template.text; if report.title.isEmpty { report.title = template.name } } } }
                     TextEditor(text: $report.text).frame(minHeight: 180).accessibilityLabel("Berichtstext")
                     TextField("Verwendetes Material", text: $report.materials, axis: .vertical)
+                }
+                Section("Bericht diktieren") {
+                    TextEditor(text: $speech.transcript).frame(minHeight: 90).accessibilityLabel("Diktat für den Bericht")
+                    HStack {
+                        Button { if speech.recording { speech.stop() } else { Task { await speech.start() } } } label: { Label(speech.recording ? "Aufnahme stoppen" : "Aufnahme starten", systemImage: speech.recording ? "stop.fill" : "mic.fill") }
+                        Button("Unverändert übernehmen") { appendSpeech(speech.transcript) }.disabled(speech.recording || speech.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    Button("Professionell formulieren") {
+                        rewritingSentence = true
+                        Task { @MainActor in defer { rewritingSentence = false }; do { appendSpeech(try await ReportAI.rewriteSentence(speech.transcript)) } catch { store.error = error.localizedDescription } }
+                    }.disabled(!ReportAI.available || speech.recording || rewritingSentence || speech.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if rewritingSentence { ProgressView("Satz wird formuliert …") }
+                    if !ReportAI.available { Text("Professionelles Formulieren benötigt verfügbare lokale Apple Intelligence.").font(.caption).foregroundStyle(.secondary) }
+                }
+                Section("Interne Notizen") {
+                    TextEditor(text: Binding(get: { report.internalNotes ?? "" }, set: { report.internalNotes = $0 })).frame(minHeight: 90).accessibilityLabel("Interne Notizen")
+                    Text("Nur für Verwaltung und Monteure sichtbar. Diese Notizen erscheinen nicht im Kundenbericht oder PDF.").font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Baustellenfotos") {
                     ForEach($report.photos) { $photo in
@@ -84,6 +103,7 @@ struct ReportEditor: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Speichern") { if store.save(report: report) { dismiss() } }.disabled(!valid || loadingPhotos) }
             }
             .onAppear { ensureJob() }
+            .onDisappear { speech.cancel() }
             .onChange(of: store.data.jobs.count) { _, _ in ensureJob() }
             .onChange(of: pickerItems) { _, items in
                 loadingPhotos = true
@@ -100,9 +120,11 @@ struct ReportEditor: View {
             .sheet(isPresented: $takingPhoto) { CameraPicker { image in do { report.photos.append(try store.addPhoto(image)) } catch { store.error = error.localizedDescription } } }
             .sheet(isPresented: $addingMeasurement) { NavigationStack { MeasurementEditor { report.measurements.append($0) } } }
             .sheet(isPresented: $addingJob) { NavigationStack { JobEditor(job: Job(title: "", customer: "", address: "")) } }
+            .alert("Spracheingabe", isPresented: Binding(get: { speech.error != nil }, set: { if !$0 { speech.error = nil } })) { Button("OK") { speech.error = nil } } message: { Text(speech.error ?? "") }
     }
     private var valid: Bool { store.job(report.jobID) != nil && ![report.title, report.author, report.text].contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } }
     private func ensureJob() { if store.job(report.jobID) == nil, let first = store.data.jobs.first { report.jobID = first.id } }
+    private func appendSpeech(_ text: String) { let sentence=text.trimmingCharacters(in: .whitespacesAndNewlines);guard !sentence.isEmpty else{return};report.text += (report.text.isEmpty ? "" : "\n") + sentence;speech.transcript="" }
 }
 
 struct ReportDetailView: View {
@@ -121,6 +143,7 @@ struct ReportDetailView: View {
                     Text(report.date, style: .date).font(.caption)
                     Text(report.completed ? "Abgeschlossen" : "Entwurf").font(.caption.bold()).foregroundStyle(report.completed ? .green : .secondary)
                     Text(report.text).textSelection(.enabled)
+                    if let notes=report.internalNotes?.trimmingCharacters(in: .whitespacesAndNewlines),!notes.isEmpty { VStack(alignment: .leading,spacing:6) { Label("Interne Notizen",systemImage:"lock.fill").font(.headline);Text(notes).textSelection(.enabled) }.padding().frame(maxWidth:.infinity,alignment:.leading).background(Color.yellow.opacity(0.14),in:RoundedRectangle(cornerRadius:10)) }
                     if !report.materials.isEmpty { Text("Material").font(.headline); Text(report.materials) }
                     ForEach(report.measurements) { measurement in Text("\(measurement.label): \(measurement.squareMetres.formatted()) m²") }
                     ForEach(report.photos) { photo in
