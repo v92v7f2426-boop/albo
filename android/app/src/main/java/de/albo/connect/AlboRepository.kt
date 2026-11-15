@@ -83,7 +83,12 @@ class AlboRepository(context: Context) {
         return database.optString("employee", "Salvatore Albo")
     }
     val canManage: Boolean get() = root.optJSONObject("identity")?.optString("role") != "worker"
-    val hasPendingSync: Boolean get() = root.optBoolean("pendingSync", false)
+    val hasPendingSync: Boolean get() {
+        if (root.has("pendingSync")) return root.optBoolean("pendingSync", false)
+        val baseline = root.optJSONObject("sync")?.optString("baseline").orEmpty()
+        if (baseline.isBlank()) return false
+        return try { !database.similar(JSONObject(baseline)) } catch (_: Exception) { true }
+    }
     val jobs: JSONArray get() = database.array("jobs")
     val entries: JSONArray get() = database.array("entries")
     val reports: JSONArray get() = database.array("reports")
