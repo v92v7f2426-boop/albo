@@ -6,3 +6,8 @@ xcuserdata/
 pc/data/
 *.pem
 *.p12
+
+android/.gradle/
+android/local.properties
+android/**/build/
+*.apk

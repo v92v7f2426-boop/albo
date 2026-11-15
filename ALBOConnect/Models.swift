@@ -56,6 +56,11 @@ struct Report: Identifiable, Codable {
     var author: String
     var title: String
     var text: String
+    var internalNotes: String? = nil
+    var checklistIDs: [String]? = nil
+    var catalogIDs: [String]? = nil
+    var positions: [ReportPosition]? = nil
+    var checklistChoices: [String: String]? = nil
     var materials: String
     var photos: [SitePhoto] = []
     var measurements: [Measurement] = []
@@ -76,6 +81,16 @@ struct ReportTemplate: Identifiable, Codable {
     ]
 }
 
+struct ReportPosition: Identifiable, Codable {
+    var id: String? = nil
+    var kind: String
+    var catalogID: String? = nil
+    var name: String
+    var unit: String
+    var price: Double
+    var quantity: Double
+}
+
 struct AppData: Codable {
     var jobs: [Job] = []
     var reports: [Report] = []
@@ -86,6 +101,11 @@ struct AppData: Codable {
     var clocks: [String: RunningClock]? = nil
     var employees: [Employee]? = nil
     var customers: [Customer]? = nil
+    var appointments: [Appointment]? = nil
+    var materials: [CatalogItem]? = nil
+    var services: [CatalogItem]? = nil
+    var checklists: [SavedChecklist]? = nil
+    var absences: [AbsenceEntry]? = nil
     var syncState: WorkspaceSyncState? = nil
 }
 
@@ -117,6 +137,46 @@ struct Customer: Identifiable, Codable {
     var address: String
     var phone = ""
     var email = ""
+    var type: String? = nil
+    var customerNumber: String? = nil
+    var firstName: String? = nil
+    var lastName: String? = nil
+    var companyName: String? = nil
+    var landline: String? = nil
+    var mobile: String? = nil
+}
+
+struct Appointment: Identifiable, Codable {
+    var id = UUID()
+    var customerID: String? = nil
+    var customer: String
+    var title: String
+    var date: Date
+    var deliveryAddress: String
+    var sameAddress = true
+    var notes = ""
+}
+
+struct CatalogItem: Identifiable, Codable {
+    var id = UUID()
+    var name: String
+    var unit = "Stk."
+    var price = 0.0
+}
+
+struct SavedChecklist: Identifiable, Codable {
+    var id = UUID()
+    var name: String
+    var items: [String]
+}
+
+struct AbsenceEntry: Identifiable, Codable {
+    var id = UUID()
+    var type: String
+    var employee: String
+    var start: Date
+    var end: Date
+    var status = "Beantragt"
 }
 
 enum InputNumber {
