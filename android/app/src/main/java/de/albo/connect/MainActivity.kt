@@ -4,12 +4,16 @@ import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.speech.RecognizerIntent
+import android.graphics.BitmapFactory
+import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assignment
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreHoriz
@@ -51,6 +56,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -64,6 +70,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -73,7 +81,10 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -103,18 +114,20 @@ private fun AlboApp(context: android.content.Context) {
     var reportJobID by remember { mutableStateOf("") }
     var server by remember { mutableStateOf(repository.root.optJSONObject("connection")?.optString("server", "") ?: "") }
     var token by remember { mutableStateOf(repository.root.optJSONObject("connection")?.optString("token", "") ?: "") }
+    var loginUsername by remember { mutableStateOf("") }
+    var loginPassword by remember { mutableStateOf("") }
     var syncMessage by remember { mutableStateOf("") }
     var syncBusy by remember { mutableStateOf(false) }
     var clockTick by remember { mutableIntStateOf(0) }
     val snack = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { while (true) { delay(1000); clockTick++ } }
-    val tabs = listOf("Start", "Baustellen", "Berichte", "Zeiten", "Mehr")
-    val icons = listOf(Icons.Default.Home, Icons.Default.Build, Icons.Default.Assignment, Icons.Default.PlayArrow, Icons.Default.MoreHoriz)
+    val tabs = listOf("Start", "Baustellen", "Berichte", "Zeiten", "Archiv", "Mehr")
+    val icons = listOf(Icons.Default.Home, Icons.Default.Build, Icons.Default.Assignment, Icons.Default.PlayArrow, Icons.Default.Archive, Icons.Default.MoreHoriz)
     MaterialTheme(colorScheme = MaterialTheme.colorScheme.copy(primary = BrandBlue, secondary = BrandBlue, background = PageBackground)) {
         Scaffold(
             snackbarHost = { SnackbarHost(snack) },
-            topBar = { TopAppBar(title = { Text("ALBO Connect", fontWeight = FontWeight.Bold) }) },
+            topBar = { TopAppBar(title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Image(painterResource(R.drawable.albo_launcher), contentDescription = "ALBO Logo", modifier = Modifier.size(30.dp)); Text("ALBO Connect", fontWeight = FontWeight.Bold) } }) },
             bottomBar = { NavigationBar { tabs.forEachIndexed { index, title -> NavigationBarItem(selected = tab == index, onClick = { tab = index }, icon = { Icon(icons[index], contentDescription = title) }, label = { Text(title) }) } } },
             floatingActionButton = {
                 when (tab) {
@@ -126,12 +139,15 @@ private fun AlboApp(context: android.content.Context) {
             Box(Modifier.fillMaxSize().background(PageBackground).padding(inset)) {
                 when (tab) {
                     0 -> HomeScreen(repository, revision, clockTick) { tab = it }
-                    1 -> JobsScreen(repository, revision, clockTick, onOpenReport = { reportJobID = it; showReportEditor = true }, onRefresh = { revision++ })
-                    2 -> ReportsScreen(repository, revision, onNew = { reportJobID = it; showReportEditor = true })
+                    1 -> JobsScreen(repository, revision, clockTick, archivedInitial = false, onNavigate = { tab = it }, onOpenReport = { reportJobID = it; showReportEditor = true }, onRefresh = { revision++ }, onError = { scope.launch { snack.showSnackbar(it) } })
+                    2 -> ReportsScreen(repository, revision, onNew = { reportJobID = it; showReportEditor = true }, onChanged = { revision++ }, onError = { scope.launch { snack.showSnackbar(it) } })
                     3 -> TimeScreen(repository, revision, clockTick, onChanged = { revision++ })
-                    else -> MoreScreen(repository, revision, server, token, syncMessage, syncBusy,
+                    4 -> JobsScreen(repository, revision, clockTick, archivedInitial = true, onNavigate = { tab = it }, onOpenReport = { reportJobID = it; showReportEditor = true }, onRefresh = { revision++ }, onError = { scope.launch { snack.showSnackbar(it) } })
+                    else -> MoreScreen(repository, revision, server, token, syncMessage, syncBusy, loginUsername, loginPassword,
                         onServer = { server = it }, onToken = { token = it },
+                        onLoginUsername = { loginUsername = it }, onLoginPassword = { loginPassword = it },
                         onSave = { try { repository.saveConnection(server, token); scope.launch { snack.showSnackbar("PC-Verbindung gespeichert.") } } catch (e: Exception) { scope.launch { snack.showSnackbar(e.message ?: "Verbindungsdaten ungültig.") } } },
+                        onLogin = { scope.launch { syncBusy = true; syncMessage = "Anmeldung läuft …"; try { syncMessage = repository.login(server, loginUsername, loginPassword); token = repository.root.optJSONObject("connection")?.optString("token", "").orEmpty(); loginPassword = ""; syncMessage += "\n" + repository.synchronize(); revision++ } catch (e: Exception) { syncMessage = e.message ?: "Anmeldung fehlgeschlagen." }; syncBusy = false } },
                         onSync = { scope.launch { syncBusy = true; syncMessage = "Synchronisierung läuft …"; try { repository.saveConnection(server, token); syncMessage = repository.synchronize(); revision++ } catch (e: Exception) { syncMessage = e.message ?: "Synchronisierung fehlgeschlagen." }; syncBusy = false } })
                 }
             }
@@ -180,47 +196,113 @@ private fun StatCard(label: String, value: String, modifier: Modifier = Modifier
 }
 
 @Composable
-private fun JobsScreen(repo: AlboRepository, revision: Int, tick: Int, onOpenReport: (String) -> Unit, onRefresh: () -> Unit) {
-    val jobs = (0 until repo.jobs.length()).mapNotNull { repo.jobs.optJSONObject(it) }
+private fun JobsScreen(repo: AlboRepository, revision: Int, tick: Int, archivedInitial: Boolean, onNavigate: (Int) -> Unit, onOpenReport: (String) -> Unit, onRefresh: () -> Unit, onError: (String) -> Unit) {
+    val archived = archivedInitial
+    var query by remember { mutableStateOf("") }
+    var deleteID by remember { mutableStateOf("") }
+    val allJobs = (0 until repo.jobs.length()).mapNotNull { repo.jobs.optJSONObject(it) }
+    val jobs = allJobs.filter { (it.optString("status") == "Abgeschlossen") == archived }
+        .filter { !archived || "${it.optString("customer")} ${it.optString("title")} ${it.optString("address")}".contains(query, true) }
     val clock = repo.database.objectValue("clocks").optJSONObject(repo.employee)
-    LazyColumn(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (jobs.isEmpty()) item { Text("Noch keine Baustellen. Verbinde dich unter Mehr mit der PC-Verwaltung oder lege lokal eine Baustelle an.", Modifier.padding(16.dp)) }
-        items(jobs, key = { it.optString("id") }) { job ->
-            val id = job.optString("id")
-            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text(job.optString("customer"), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                    Text(job.optString("title"))
-                    Text(job.optString("deliveryAddress").ifBlank { job.optString("address") }, style = MaterialTheme.typography.bodySmall)
-                    Text(job.optString("status", "Geplant"), color = BrandBlue)
-                    Text("Deine Projektzeit: ${formatDuration(projectSeconds(repo, id))}", style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        val runningHere = clock != null && clock.optString("jobID") == id && clock.has("segmentStart")
-                        Button(onClick = { if (clock != null && clock.optString("jobID") == id && !clock.has("segmentStart")) repo.start(id) else if (clock == null || clock.optString("jobID") != id) repo.start(id); onRefresh() }, enabled = !runningHere) { Text(if (clock?.optString("jobID") == id) "Weiterarbeiten" else "Hier starten") }
-                        OutlinedButton(onClick = { onOpenReport(id) }) { Text("Bericht schreiben") }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (archived) OutlinedButton(onClick = { onNavigate(1) }) { Text("‹ Baustellen") }
+            else OutlinedButton(onClick = { onNavigate(4) }) { Text("Abgeschlossene Projekte öffnen") }
+        }
+        if (archived) OutlinedTextField(query, { query = it }, label = { Text("Abgeschlossene Projekte suchen") }, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp), singleLine = true)
+        LazyColumn(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (jobs.isEmpty()) item { Text(if (archived) "Keine abgeschlossenen Projekte gefunden." else "Noch keine Baustellen. Verbinde dich unter Mehr mit der PC-Verwaltung oder lege lokal eine Baustelle an.", Modifier.padding(16.dp)) }
+            items(jobs, key = { it.optString("id") }) { job ->
+                val id = job.optString("id")
+                Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(job.optString("customer"), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        Text(job.optString("title"))
+                        Text(job.optString("deliveryAddress").ifBlank { job.optString("address") }, style = MaterialTheme.typography.bodySmall)
+                        Text(job.optString("status", "Geplant"), color = BrandBlue)
+                        Text("Deine Projektzeit: ${formatDuration(projectSeconds(repo, id))}", style = MaterialTheme.typography.bodySmall)
+                        if (!archived) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val runningHere = clock != null && clock.optString("jobID") == id && clock.has("segmentStart")
+                            Button(onClick = { try { if (clock != null && clock.optString("jobID") == id && !clock.has("segmentStart")) repo.start(id) else if (clock == null || clock.optString("jobID") != id) repo.start(id); onRefresh() } catch (e: Exception) { onError(e.message ?: "Arbeitszeit konnte nicht gestartet werden.") } }, enabled = !runningHere) { Text(if (clock?.optString("jobID") == id) "Weiterarbeiten" else "Hier starten") }
+                            OutlinedButton(onClick = { onOpenReport(id) }) { Text("Bericht schreiben") }
+                        } else OutlinedButton(onClick = { onOpenReport(id) }) { Text("Berichte zum Projekt") }
+                        if (repo.canManage && !archived) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { try { repo.completeJob(id); onRefresh() } catch (e: Exception) { onError(e.message ?: "Projekt konnte nicht abgeschlossen werden.") } }) { Text("Projekt abschließen") }
+                            TextButton(onClick = { deleteID = id }) { Text("Projekt löschen") }
+                        }
+                        if (clock != null && clock.optString("jobID") == id) Text(clockLabel(repo, clock, tick), fontWeight = FontWeight.Bold)
                     }
-                    if (clock != null && clock.optString("jobID") == id) Text(clockLabel(repo, clock, tick), fontWeight = FontWeight.Bold)
                 }
+            }
+        }
+    }
+    if (deleteID.isNotBlank()) AlertDialog(onDismissRequest = { deleteID = "" }, title = { Text("Projekt löschen?") }, text = { Text("Das Projekt wird dauerhaft von diesem Gerät entfernt. Projekte mit Arbeitszeiten oder Berichten können nicht gelöscht werden.") }, confirmButton = { TextButton(onClick = { try { repo.deleteJob(deleteID); onRefresh() } catch (e: Exception) { onError(e.message ?: "Projekt konnte nicht gelöscht werden.") }; deleteID = "" }) { Text("Löschen") } }, dismissButton = { TextButton(onClick = { deleteID = "" }) { Text("Abbrechen") } })
+}
+
+@Composable
+private fun ReportsScreen(repo: AlboRepository, revision: Int, onNew: (String) -> Unit, onChanged: () -> Unit, onError: (String) -> Unit) {
+    val reports = (0 until repo.reports.length()).mapNotNull { repo.reports.optJSONObject(it) }.sortedByDescending { it.optDouble("date") }
+    var openReport by remember { mutableStateOf<JSONObject?>(null) }
+    LazyColumn(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (reports.isEmpty()) item { Text("Noch keine Berichte gespeichert.", Modifier.padding(16.dp)) }
+        items(reports, key = { it.optString("id") }) { report ->
+            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(report.optString("title"), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                Text("${jobName(repo, report.optString("jobID"))} · ${formatDate(report.optDouble("date"))}", style = MaterialTheme.typography.bodySmall)
+                Text(if (report.optBoolean("completed")) "Abgeschlossen" else "Entwurf", color = BrandBlue, style = MaterialTheme.typography.labelMedium)
+                Text(report.optString("text"), maxLines = 3)
+                OutlinedButton(onClick = { openReport = report }) { Text("Kundenansicht öffnen") }
+            } }
+        }
+        item { Button(onClick = { repo.jobs.optJSONObject(0)?.optString("id")?.let(onNew) }, enabled = repo.jobs.length() > 0, modifier = Modifier.fillMaxWidth()) { Text("Bericht erstellen") } }
+    }
+    openReport?.let { report -> CustomerReportDialog(report, repo, onDismiss = { openReport = null }, onSignatureSaved = { name, signature -> try { repo.saveCustomerSignature(report.optString("id"), name, signature); onChanged(); openReport = null } catch (e: Exception) { onError(e.message ?: "Unterschrift konnte nicht gespeichert werden.") } }) }
+}
+
+@Composable
+private fun CustomerReportDialog(report: JSONObject, repo: AlboRepository, onDismiss: () -> Unit, onSignatureSaved: (String, String) -> Unit) {
+    var customerName by remember { mutableStateOf(report.optString("customerName")) }
+    var signature by remember { mutableStateOf(report.optString("customerSignature")) }
+    var error by remember { mutableStateOf("") }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize().padding(12.dp), shape = RoundedCornerShape(18.dp), color = Color.White) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Kundenansicht · Monteurbericht", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    TextButton(onClick = onDismiss) { Text("Schließen") }
+                }
+                Text(if (report.optBoolean("completed")) "Abgeschlossener Bericht" else "Berichtsentwurf", color = BrandBlue, fontWeight = FontWeight.SemiBold)
+                Text(report.optString("title"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(jobName(repo, report.optString("jobID")), fontWeight = FontWeight.SemiBold)
+                Text("Datum: ${formatDate(report.optDouble("date"))}", style = MaterialTheme.typography.bodySmall)
+                Text("Erfasste Arbeitszeit am Projekt", fontWeight = FontWeight.Bold)
+                Text(formatDuration(projectGrossSeconds(repo, report.optString("jobID"))), color = BrandBlue, style = MaterialTheme.typography.titleLarge)
+                Text("Durchgeführte Arbeiten", fontWeight = FontWeight.Bold)
+                Text(report.optString("text"))
+                if (report.optString("materials").isNotBlank()) {
+                    Text("Material und Leistungen", fontWeight = FontWeight.Bold)
+                    Text(report.optString("materials"))
+                }
+                val workerSignature = report.optString("workerSignature")
+                Text("Unterschrift Monteur", fontWeight = FontWeight.Bold)
+                if (workerSignature.isNotBlank()) SignatureImage(workerSignature)
+                else Text("Noch nicht unterschrieben", style = MaterialTheme.typography.bodySmall)
+                Text("Unterschrift Kunde", fontWeight = FontWeight.Bold)
+                if (signature.isNotBlank()) SignatureImage(signature)
+                OutlinedTextField(customerName, { customerName = it }, label = { Text("Name des Kunden") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                SignaturePad("Hier unterschreiben", signature, { signature = it })
+                if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
+                Button(onClick = { if (customerName.isBlank()) error = "Bitte den Namen des Kunden eintragen." else if (signature.isBlank()) error = "Bitte im Unterschriftsfeld unterschreiben und die Unterschrift übernehmen." else onSignatureSaved(customerName, signature) }, modifier = Modifier.fillMaxWidth()) { Text("Kundenunterschrift speichern") }
             }
         }
     }
 }
 
 @Composable
-private fun ReportsScreen(repo: AlboRepository, revision: Int, onNew: (String) -> Unit) {
-    val reports = (0 until repo.reports.length()).mapNotNull { repo.reports.optJSONObject(it) }.sortedByDescending { it.optDouble("date") }
-    LazyColumn(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (reports.isEmpty()) item { Text("Noch keine Berichte gespeichert.", Modifier.padding(16.dp)) }
-        items(reports, key = { it.optString("id") }) { report ->
-            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                Text(report.optString("title"), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                Text("${jobName(repo, report.optString("jobID"))} · ${formatDate(report.optDouble("date"))}", style = MaterialTheme.typography.bodySmall)
-                Text(report.optString("text"), maxLines = 3)
-                if (!report.optString("internalNotes").isBlank()) Text("Interne Notiz vorhanden", color = BrandBlue, style = MaterialTheme.typography.labelSmall)
-            } }
-        }
-        item { Button(onClick = { repo.jobs.optJSONObject(0)?.optString("id")?.let(onNew) }, enabled = repo.jobs.length() > 0, modifier = Modifier.fillMaxWidth()) { Text("Bericht erstellen") } }
-    }
+private fun SignatureImage(encoded: String) {
+    val bitmap = remember(encoded) { try { BitmapFactory.decodeByteArray(Base64.decode(encoded, Base64.DEFAULT), 0, Base64.decode(encoded, Base64.DEFAULT).size) } catch (_: Exception) { null } }
+    if (bitmap != null) Image(bitmap.asImageBitmap(), contentDescription = "Digitale Unterschrift", modifier = Modifier.fillMaxWidth().height(100.dp).background(Color.White))
+    else Text("Unterschrift gespeichert", style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable
@@ -254,13 +336,20 @@ private fun TimeScreen(repo: AlboRepository, revision: Int, tick: Int, onChanged
 }
 
 @Composable
-private fun MoreScreen(repo: AlboRepository, revision: Int, server: String, token: String, syncMessage: String, syncBusy: Boolean, onServer: (String) -> Unit, onToken: (String) -> Unit, onSave: () -> Unit, onSync: () -> Unit) {
+private fun MoreScreen(repo: AlboRepository, revision: Int, server: String, token: String, syncMessage: String, syncBusy: Boolean, username: String, password: String, onServer: (String) -> Unit, onToken: (String) -> Unit, onLoginUsername: (String) -> Unit, onLoginPassword: (String) -> Unit, onSave: () -> Unit, onLogin: () -> Unit, onSync: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Mehr", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("PC-Verbindung", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("Im selben WLAN: PC-IP mit Port 8787. Von unterwegs: NetBird auf PC und Handy verbinden und die NetBird-IP des PCs mit Port 8788 eintragen. Den Mitarbeiter-Kopplungsschlüssel aus der PC-Verwaltung ergänzen. Die Synchronisierung wird manuell gestartet.", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(server, onServer, label = { Text("PC-Adresse, z. B. http://100.80.10.20:8788") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            Text("Mitarbeiterkonto", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text("Melde dich mit dem Benutzernamen und Passwort an, die in der PC-Verwaltung für dich angelegt wurden. Die Anmeldung benötigt NetBird und die Serveradresse mit Port 8788.", style = MaterialTheme.typography.bodySmall)
+            OutlinedTextField(username, onLoginUsername, label = { Text("Benutzername") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            OutlinedTextField(password, onLoginPassword, label = { Text("Passwort") }, modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation())
+            Button(onClick = onLogin, enabled = !syncBusy && server.isNotBlank() && username.isNotBlank() && password.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text(if (syncBusy) "Bitte warten …" else "Mit Mitarbeiterkonto anmelden") }
+            if (repo.root.optJSONObject("identity") != null) Text("Angemeldet: ${repo.root.optJSONObject("identity")?.optString("username") ?: repo.employee}", color = BrandBlue, fontWeight = FontWeight.SemiBold)
+            Text("Alternative: Gerätekopplungsschlüssel", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             OutlinedTextField(token, onToken, label = { Text("Kopplungsschlüssel") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onSave) { Text("Verbindung speichern") }
@@ -299,6 +388,8 @@ private fun ReportEditorDialog(repo: AlboRepository, initialJobID: String, spoke
     val checklists = repo.database.optJSONArray("checklists") ?: JSONArray()
     var selected by remember { mutableStateOf(initialJobID.ifBlank { jobs.firstOrNull()?.optString("id").orEmpty() }) }
     var title by remember { mutableStateOf("") }; var text by remember { mutableStateOf(spoken) }; var notes by remember { mutableStateOf("") }; var materialsText by remember { mutableStateOf("") }; var customer by remember { mutableStateOf("") }; var quantity by remember { mutableStateOf("1") }; var selectedChecks by remember { mutableStateOf(setOf<String>()) }; var workerSignature by remember { mutableStateOf("") }; var customerSignature by remember { mutableStateOf("") }; var error by remember { mutableStateOf("") }
+    var expandWorkText by remember { mutableStateOf(false) }
+    var expandedCatalog by remember { mutableStateOf("") }
     LaunchedEffect(spoken) { if (spoken.isNotBlank()) text = if (text.isBlank()) spoken else text + "\n" + spoken }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("Monteurbericht") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -309,13 +400,22 @@ private fun ReportEditorDialog(repo: AlboRepository, initialJobID: String, spoke
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { (0 until templates.length()).mapNotNull { templates.optJSONObject(it) }.forEach { template -> TextButton(onClick = { title = template.optString("name"); text = template.optString("text") }) { Text(template.optString("name")) } } }
             }
             OutlinedTextField(title, { title = it }, label = { Text("Überschrift") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(text, { text = it }, label = { Text("Durchgeführte Arbeiten") }, modifier = Modifier.fillMaxWidth().height(130.dp))
+            Box(Modifier.fillMaxWidth().height(130.dp)) {
+                OutlinedTextField(text, {}, label = { Text("Durchgeführte Arbeiten · antippen zum Vergrößern") }, modifier = Modifier.fillMaxSize(), readOnly = true, minLines = 4)
+                Box(Modifier.matchParentSize().clickable { expandWorkText = true })
+            }
             OutlinedButton(onClick = onSpeak) { Icon(Icons.Default.Mic, null); Text("Satz diktieren") }
-            Text("Leistungskatalog", fontWeight = FontWeight.SemiBold)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { (0 until services.length()).mapNotNull { services.optJSONObject(it) }.forEach { item -> TextButton(onClick = { materialsText += (if (materialsText.isBlank()) "" else "\n") + "Leistung: " + item.optString("name") + " × " + quantity.ifBlank { "1" } + " " + item.optString("unit", "") }) { Text(item.optString("name")) } } }
-            Text("Materialkatalog", fontWeight = FontWeight.SemiBold)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { (0 until materials.length()).mapNotNull { materials.optJSONObject(it) }.forEach { item -> TextButton(onClick = { materialsText += (if (materialsText.isBlank()) "" else "\n") + "Material: " + item.optString("name") + " × " + quantity.ifBlank { "1" } + " " + item.optString("unit", "") }) { Text(item.optString("name")) } } }
             OutlinedTextField(quantity, { quantity = it }, label = { Text("Menge für Katalogauswahl") }, modifier = Modifier.fillMaxWidth())
+            OutlinedButton(onClick = { expandedCatalog = if (expandedCatalog == "services") "" else "services" }, modifier = Modifier.fillMaxWidth()) { Text(if (expandedCatalog == "services") "Leistungskatalog schließen" else "Leistungskatalog öffnen") }
+            if (expandedCatalog == "services") {
+                if (services.length() == 0) Text("Der Leistungskatalog ist noch leer.", style = MaterialTheme.typography.bodySmall)
+                (0 until services.length()).mapNotNull { services.optJSONObject(it) }.forEach { item -> TextButton(onClick = { materialsText += (if (materialsText.isBlank()) "" else "\n") + "Leistung: " + item.optString("name") + " × " + quantity.ifBlank { "1" } + " " + item.optString("unit", "") }) { Text("+ ${item.optString("name")}") } }
+            }
+            OutlinedButton(onClick = { expandedCatalog = if (expandedCatalog == "materials") "" else "materials" }, modifier = Modifier.fillMaxWidth()) { Text(if (expandedCatalog == "materials") "Materialkatalog schließen" else "Materialkatalog öffnen") }
+            if (expandedCatalog == "materials") {
+                if (materials.length() == 0) Text("Der Materialkatalog ist noch leer.", style = MaterialTheme.typography.bodySmall)
+                (0 until materials.length()).mapNotNull { materials.optJSONObject(it) }.forEach { item -> TextButton(onClick = { materialsText += (if (materialsText.isBlank()) "" else "\n") + "Material: " + item.optString("name") + " × " + quantity.ifBlank { "1" } + " " + item.optString("unit", "") }) { Text("+ ${item.optString("name")}") } }
+            }
             OutlinedTextField(materialsText, { materialsText = it }, label = { Text("Material und Leistungen · ohne Preise") }, modifier = Modifier.fillMaxWidth().height(90.dp))
             if (checklists.length() > 0) {
                 Text("Checklisten", fontWeight = FontWeight.SemiBold)
@@ -335,6 +435,18 @@ private fun ReportEditorDialog(repo: AlboRepository, initialJobID: String, spoke
             TextButton(onClick = { if (selected.isBlank()) error = "Bitte zuerst eine Baustelle synchronisieren." else if (title.isBlank() || text.isBlank()) error = "Überschrift und Arbeitsbeschreibung fehlen." else onSave(selected, title, text, notes, materialsText, selectedChecks, customer, workerSignature, customerSignature) }) { Text(if (customer.isNotBlank() && workerSignature.isNotBlank() && customerSignature.isNotBlank()) "Unterschreiben & abschließen" else "Entwurf speichern") }
         }
     }, dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } })
+    if (expandWorkText) Dialog(onDismissRequest = { expandWorkText = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize().padding(12.dp), shape = RoundedCornerShape(18.dp), color = Color.White) {
+            Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Durchgeführte Arbeiten", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    TextButton(onClick = { expandWorkText = false }) { Text("Schließen") }
+                }
+                OutlinedTextField(text, { text = it }, label = { Text("Berichtstext") }, modifier = Modifier.fillMaxWidth().weight(1f), minLines = 12)
+                Button(onClick = { expandWorkText = false }, modifier = Modifier.fillMaxWidth()) { Text("Text übernehmen") }
+            }
+        }
+    }
 }
 
 @Composable
@@ -391,6 +503,7 @@ private fun projectSeconds(repo: AlboRepository, jobID: String): Double {
     val running = if (current != null && current.optString("jobID").equals(jobID, true)) clockSeconds(repo, current) else 0.0
     return saved + running
 }
+private fun projectGrossSeconds(repo: AlboRepository, jobID: String): Double = projectSeconds(repo, jobID)
 private fun clockSeconds(repo: AlboRepository, clock: JSONObject): Double = clock.optDouble("accumulated", 0.0) + if (clock.has("segmentStart")) (AlboRepository.nowSeconds() - clock.optDouble("segmentStart")).coerceAtLeast(0.0) else 0.0
 private fun clockLabel(repo: AlboRepository, clock: JSONObject, tick: Int): String { @Suppress("UNUSED_VARIABLE") val redraw = tick; return formatDuration(clockSeconds(repo, clock)) }
 private fun formatDuration(seconds: Double): String { val value = seconds.toLong().coerceAtLeast(0); return String.format(Locale.GERMANY, "%02d:%02d:%02d", value / 3600, (value / 60) % 60, value % 60) }

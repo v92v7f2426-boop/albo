@@ -181,7 +181,7 @@ export function createWorkspaceServer({dataDir=path.join(here,'data'),host='127.
   const handler=async(req,res,remote=false)=>{
     try{
       const url=new URL(req.url,'http://localhost');
-      if(remote&&!((req.method==='GET'&&url.pathname==='/api/workspace')||(req.method==='POST'&&url.pathname==='/api/sync')))throw failure(403,'Über die Baustellenverbindung ist nur der Datenabgleich freigegeben.');
+      if(remote&&!((req.method==='GET'&&url.pathname==='/api/workspace')||(req.method==='POST'&&url.pathname==='/api/sync')||(req.method==='POST'&&url.pathname==='/api/mobile-login')))throw failure(403,'Über die Baustellenverbindung ist nur Anmeldung und Datenabgleich freigegeben.');
       if(req.headers.origin&&req.headers.origin!==`${tls?'https':'http'}://${req.headers.host}`)throw failure(403,'Anfrage von fremdem Ursprung abgelehnt.');
       if(req.headers['sec-fetch-site']==='cross-site')throw failure(403,'Fremde Website darf nicht auf diese Verwaltung zugreifen.');
       if(req.method==='GET'&&url.pathname==='/api/auth-status')return respond(res,200,{setupRequired:state.users.length===0});
@@ -204,6 +204,22 @@ export function createWorkspaceServer({dataDir=path.join(here,'data'),host='127.
         if(!user||!matches){attempt.count++;if(attempt.count>=8){attempt.count=0;attempt.until=Date.now()+15*60*1000;}loginAttempts.set(ip,attempt);throw failure(401,'Benutzername oder Passwort ist falsch.');}
         if(user.role==='worker'&&!state.database.employees.some(e=>key(e.id)===key(user.employeeID)&&e.active))throw failure(403,'Mitarbeiterzugang ist nicht aktiv.');
         loginAttempts.delete(ip);return respond(res,200,{user:safeUser(user)},newSession(res,user));
+      }
+      if(req.method==='POST'&&url.pathname==='/api/mobile-login'){
+        const remoteIP=(req.socket.remoteAddress||'').replace(/^::ffff:/,'');
+        if(!remote||!privateVPNAddress(remoteIP))throw failure(403,'Die mobile Kontoanmeldung ist nur über die private NetBird-Verbindung erlaubt.');
+        const ip=remoteIP||'unknown',attempt=loginAttempts.get(ip)||{count:0,until:0};if(attempt.until>Date.now())throw failure(429,'Zu viele Anmeldeversuche. Bitte später erneut versuchen.');
+        const request=await body(req),username=typeof request.username==='string'?request.username.trim().toLowerCase():'';
+        const user=state.users.find(u=>u.username.toLowerCase()===username&&u.active);
+        const supplied=typeof request.password==='string'?request.password.slice(0,200):'';
+        const candidate=crypto.scryptSync(supplied,user?.salt||'albo-invalid-user-salt',64),expected=Buffer.from(user?.passwordHash||'0'.repeat(128),'hex');
+        const matches=typeof request.password==='string'&&request.password.length<=200&&request.password.length>=12&&expected.length===candidate.length&&crypto.timingSafeEqual(candidate,expected);
+        if(!user||!matches){attempt.count++;if(attempt.count>=8){attempt.count=0;attempt.until=Date.now()+15*60*1000;}loginAttempts.set(ip,attempt);throw failure(401,'Benutzername oder Passwort ist falsch.');}
+        if(user.role!=='worker'||!user.employeeID)throw failure(403,'Die mobile Anmeldung ist für Mitarbeiterkonten vorgesehen.');
+        if(!state.database.employees.some(e=>e.active&&key(e.id)===key(user.employeeID)))throw failure(403,'Mitarbeiterzugang ist nicht aktiv.');
+        const token=crypto.randomBytes(32).toString('hex'),record={id:uuid(),hash:hash(token),role:'worker',label:`Android · ${user.username}`,employeeID:user.employeeID,userID:user.id,created:new Date().toISOString()};
+        const next=clone(state);next.keys.push(record);commit(next);loginAttempts.delete(ip);
+        return respond(res,200,{token,identity:{username:user.username,role:user.role,employeeID:user.employeeID}});
       }
       if(req.method==='POST'&&url.pathname==='/api/logout'){
         const cookie=/(?:^|;\s*)alboSession=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie||'');if(cookie)sessions.delete(cookie[1]);
@@ -239,9 +255,9 @@ export function createWorkspaceServer({dataDir=path.join(here,'data'),host='127.
           if(request.role==='worker'&&!next.database.employees.some(e=>e.active&&key(e.id)===key(request.employeeID)))throw failure(400,'Aktiven Mitarbeiter auswählen.');
           if(request.password!==undefined&&!validPassword(request.password))throw failure(400,'Das neue Passwort muss mindestens 12 Zeichen lang sein.');
           if(user.id===id&&(!request.active||request.role!=='admin'))throw failure(400,'Das eigene Administratorkonto kann nicht deaktiviert oder herabgestuft werden.');
-          account.username=username;account.role=request.role;account.employeeID=request.role==='worker'?request.employeeID:null;account.active=request.active;if(request.password){Object.assign(account,passwordRecord(request.password));}
+           account.username=username;account.role=request.role;account.employeeID=request.role==='worker'?request.employeeID:null;account.active=request.active;if(request.password){Object.assign(account,passwordRecord(request.password));}
           if(!next.users.some(u=>u.active&&u.role==='admin'))throw failure(400,'Mindestens ein aktives Administratorkonto muss bestehen bleiben.');
-          const ownToken=/(?:^|;\s*)alboSession=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie||'')?.[1];commit(next);for(const [token,session] of sessions)if(session.userID===id&&(!account.active||(request.password&&token!==ownToken)))sessions.delete(token);return respond(res,200,{user:safeUser(account)});
+           const ownToken=/(?:^|;\s*)alboSession=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie||'')?.[1];if(!account.active||request.password)next.keys=next.keys.filter(k=>k.userID!==id);commit(next);for(const [token,session] of sessions)if(session.userID===id&&(!account.active||(request.password&&token!==ownToken)))sessions.delete(token);return respond(res,200,{user:safeUser(account)});
          }
         if(req.method==='GET'&&url.pathname==='/api/keys'){if(user.role!=='admin')throw failure(403,'Nur Verwaltung.');return respond(res,200,{keys:state.keys.map(({hash,...rest})=>rest)});}
         if(req.method==='POST'&&url.pathname==='/api/keys'){

@@ -85,6 +85,34 @@ class AlboRepository(context: Context) {
         root.put("connection", JSONObject().put("server", server.trimEnd('/')).put("token", token.trim()))
         commit()
     }
+    suspend fun login(serverAddress: String, username: String, password: String): String = withContext(Dispatchers.IO) {
+        val server = validateServer(serverAddress)
+        require(username.isNotBlank() && password.isNotBlank()) { "Benutzername und Passwort eingeben." }
+        val connection = (URL(server.toString().trimEnd('/') + "/api/mobile-login").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"; connectTimeout = 15000; readTimeout = 20000
+            setRequestProperty("Content-Type", "application/json")
+            doOutput = true
+        }
+        connection.outputStream.use { it.write(JSONObject().put("username", username.trim()).put("password", password).toString().toByteArray(Charsets.UTF_8)) }
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        val response = JSONObject(stream?.bufferedReader()?.use { it.readText() } ?: "{}")
+        connection.disconnect()
+        if (code !in 200..299) error(response.optString("error", "Anmeldung fehlgeschlagen."))
+        val token = response.optString("token")
+        val identity = response.optJSONObject("identity") ?: error("Der Server hat keine Kontoinformation zurückgegeben.")
+        require(identity.optString("role") == "worker" && identity.optString("employeeID").isNotBlank()) { "Das Konto ist keinem aktiven Mitarbeiter zugeordnet." }
+        require(token.length == 64 && token.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }) { "Der Server hat einen ungültigen Geräteschlüssel zurückgegeben." }
+        val oldIdentity = root.optJSONObject("identity")
+        val oldEmployeeID = oldIdentity?.optString("employeeID").orEmpty()
+        val newEmployeeID = identity.optString("employeeID")
+        val hasLocalWork = listOf("reports", "entries", "absences", "overtimeUses").any { database.array(it).length() > 0 } || database.objectValue("clocks").length() > 0
+        if (oldEmployeeID.isNotBlank() && !oldEmployeeID.equals(newEmployeeID, true) && hasLocalWork) error("Auf diesem Handy sind noch lokale Daten eines anderen Mitarbeiters. Bitte zuerst mit dessen Konto synchronisieren, bevor du das Konto wechselst.")
+        root.put("connection", JSONObject().put("server", server.toString().trimEnd('/')).put("token", token))
+        root.put("identity", identity)
+        commit()
+        "Angemeldet als ${identity.optString("username")}."
+    }
     private fun validateServer(raw: String): URL {
         val url = URL(raw.trim().trimEnd('/'))
         val host = url.host.lowercase()
@@ -154,6 +182,36 @@ class AlboRepository(context: Context) {
         check(canManage) { "Mitarbeiterkonten dürfen keine Baustellen anlegen." }
         require(customer.isNotBlank() && title.isNotBlank() && address.isNotBlank())
         jobs.put(JSONObject().put("id", id()).put("customer", customer.trim()).put("title", title.trim()).put("address", address.trim()).put("deliveryAddress", "").put("deliveryAddressDifferent", false).put("timeBillingMode", "effort").put("notes", "").put("status", "Geplant"))
+        commit()
+    }
+    fun completeJob(jobID: String) {
+        check(canManage) { "Nur die Geschäftsführung darf Baustellen abschließen." }
+        val job = (0 until jobs.length()).mapNotNull { jobs.optJSONObject(it) }.firstOrNull { it.optString("id").equals(jobID, true) }
+            ?: error("Baustelle wurde nicht gefunden.")
+        job.put("status", "Abgeschlossen")
+        commit()
+    }
+    fun deleteJob(jobID: String) {
+        check(canManage) { "Nur die Geschäftsführung darf Baustellen löschen." }
+        val hasEntries = (0 until entries.length()).mapNotNull { entries.optJSONObject(it) }.any { it.optString("jobID").equals(jobID, true) }
+        val hasReports = (0 until reports.length()).mapNotNull { reports.optJSONObject(it) }.any { it.optString("jobID").equals(jobID, true) }
+        val hasAppointments = (0 until database.optJSONArray("appointments").let { it?.length() ?: 0 }).any { database.optJSONArray("appointments")?.optJSONObject(it)?.optString("jobID").equals(jobID, true) }
+        val hasClock = database.objectValue("clocks").keys().asSequence().mapNotNull { database.objectValue("clocks").optJSONObject(it) }.any { it.optString("jobID").equals(jobID, true) }
+        require(!hasEntries && !hasReports && !hasClock && !hasAppointments) { "Dieses Projekt hat bereits Termine, Berichte oder Arbeitszeiten. Bitte schließe es ab, statt es zu löschen." }
+        val index = (0 until jobs.length()).firstOrNull { jobs.optJSONObject(it)?.optString("id").equals(jobID, true) }
+            ?: error("Baustelle wurde nicht gefunden.")
+        val remaining = JSONArray()
+        for (i in 0 until jobs.length()) if (i != index) remaining.put(jobs.get(i))
+        database.put("jobs", remaining)
+        commit()
+    }
+    fun saveCustomerSignature(reportID: String, customerName: String, signature: String) {
+        require(customerName.isNotBlank() && signature.isNotBlank()) { "Bitte Kundenname und Unterschrift eintragen." }
+        val report = (0 until reports.length()).mapNotNull { reports.optJSONObject(it) }.firstOrNull { it.optString("id").equals(reportID, true) }
+            ?: error("Bericht wurde nicht gefunden.")
+        report.put("customerName", customerName.trim())
+        report.put("customerSignature", signature)
+        report.put("completed", report.optString("workerSignature").isNotBlank())
         commit()
     }
     fun start(jobID: String?) {
