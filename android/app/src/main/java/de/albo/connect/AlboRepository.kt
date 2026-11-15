@@ -237,6 +237,19 @@ class AlboRepository(context: Context) {
         report.put("completed", report.optString("workerSignature").isNotBlank())
         commit()
     }
+    fun saveReportSignatures(reportID: String, customerName: String, workerSignature: String, customerSignature: String) {
+        require(customerName.isNotBlank() && workerSignature.isNotBlank() && customerSignature.isNotBlank()) { "Zum Abschließen werden Kundenname und beide Unterschriften benötigt." }
+        val report = (0 until reports.length()).mapNotNull { reports.optJSONObject(it) }.firstOrNull { it.optString("id").equals(reportID, true) }
+            ?: error("Bericht wurde nicht gefunden.")
+        report.put("customerName", customerName.trim()).put("workerSignature", workerSignature).put("customerSignature", customerSignature).put("completed", true)
+        commit()
+    }
+    fun addCustomer(name: String, address: String, phone: String, email: String) {
+        require(name.isNotBlank()) { "Bitte einen Kundennamen eintragen." }
+        val customers = database.optJSONArray("customers") ?: JSONArray().also { database.put("customers", it) }
+        customers.put(JSONObject().put("id", id()).put("type", "Privatkunde").put("customerNumber", "").put("name", name.trim()).put("firstName", name.trim()).put("lastName", "").put("companyName", "").put("address", address.trim()).put("landline", phone.trim()).put("mobile", "").put("phone", phone.trim()).put("email", email.trim()))
+        commit()
+    }
     fun start(jobID: String?) {
         val clocks = database.objectValue("clocks")
         val previous = clocks.optJSONObject(employee)

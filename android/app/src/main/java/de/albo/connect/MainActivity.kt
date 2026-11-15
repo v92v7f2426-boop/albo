@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -66,6 +68,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -256,17 +259,19 @@ private fun ReportsScreen(repo: AlboRepository, revision: Int, onNew: (String) -
         }
         item { Button(onClick = { repo.jobs.optJSONObject(0)?.optString("id")?.let(onNew) }, enabled = repo.jobs.length() > 0, modifier = Modifier.fillMaxWidth()) { Text("Bericht erstellen") } }
     }
-    openReport?.let { report -> CustomerReportDialog(report, repo, onDismiss = { openReport = null }, onSignatureSaved = { name, signature -> try { repo.saveCustomerSignature(report.optString("id"), name, signature); onChanged(); openReport = null } catch (e: Exception) { onError(e.message ?: "Unterschrift konnte nicht gespeichert werden.") } }) }
+    openReport?.let { report -> CustomerReportDialog(report, repo, onDismiss = { openReport = null }, onSignatureSaved = { name, worker, customer -> try { repo.saveReportSignatures(report.optString("id"), name, worker, customer); onChanged(); openReport = null } catch (e: Exception) { onError(e.message ?: "Bericht konnte nicht abgeschlossen werden.") } }) }
 }
 
 @Composable
-private fun CustomerReportDialog(report: JSONObject, repo: AlboRepository, onDismiss: () -> Unit, onSignatureSaved: (String, String) -> Unit) {
-    var customerName by remember { mutableStateOf(report.optString("customerName")) }
-    var signature by remember { mutableStateOf(report.optString("customerSignature")) }
-    var error by remember { mutableStateOf("") }
+private fun CustomerReportDialog(report: JSONObject, repo: AlboRepository, onDismiss: () -> Unit, onSignatureSaved: (String, String, String) -> Unit) {
+    var customerName by rememberSaveable(report.optString("id")) { mutableStateOf(report.optString("customerName")) }
+    var signature by rememberSaveable(report.optString("id")) { mutableStateOf(report.optString("customerSignature")) }
+    var workerSignature by rememberSaveable(report.optString("id")) { mutableStateOf(report.optString("workerSignature")) }
+    var error by rememberSaveable(report.optString("id")) { mutableStateOf("") }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize().padding(12.dp), shape = RoundedCornerShape(18.dp), color = Color.White) {
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.fillMaxSize().navigationBarsPadding().imePadding().padding(16.dp)) {
+              Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("Kundenansicht · Monteurbericht", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     TextButton(onClick = onDismiss) { Text("Schließen") }
@@ -283,16 +288,17 @@ private fun CustomerReportDialog(report: JSONObject, repo: AlboRepository, onDis
                     Text("Material und Leistungen", fontWeight = FontWeight.Bold)
                     Text(report.optString("materials"))
                 }
-                val workerSignature = report.optString("workerSignature")
                 Text("Unterschrift Monteur", fontWeight = FontWeight.Bold)
                 if (workerSignature.isNotBlank()) SignatureImage(workerSignature)
-                else Text("Noch nicht unterschrieben", style = MaterialTheme.typography.bodySmall)
+                else SignaturePad("Monteur unterschreibt", workerSignature, { workerSignature = it })
                 Text("Unterschrift Kunde", fontWeight = FontWeight.Bold)
                 if (signature.isNotBlank()) SignatureImage(signature)
                 OutlinedTextField(customerName, { customerName = it }, label = { Text("Name des Kunden") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 SignaturePad("Hier unterschreiben", signature, { signature = it })
                 if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
-                Button(onClick = { if (customerName.isBlank()) error = "Bitte den Namen des Kunden eintragen." else if (signature.isBlank()) error = "Bitte im Unterschriftsfeld unterschreiben und die Unterschrift übernehmen." else onSignatureSaved(customerName, signature) }, modifier = Modifier.fillMaxWidth()) { Text("Kundenunterschrift speichern") }
+              }
+              Spacer(Modifier.height(8.dp))
+              Button(onClick = { if (customerName.isBlank()) error = "Bitte den Namen des Kunden eintragen." else if (workerSignature.isBlank()) error = "Bitte zuerst die Monteurunterschrift übernehmen." else if (signature.isBlank()) error = "Bitte die Kundenunterschrift übernehmen." else onSignatureSaved(customerName, workerSignature, signature) }, modifier = Modifier.fillMaxWidth(), enabled = !report.optBoolean("completed")) { Text(if (report.optBoolean("completed")) "Bericht abgeschlossen" else "Bericht abschließen") }
             }
         }
     }
@@ -386,10 +392,16 @@ private fun ReportEditorDialog(repo: AlboRepository, initialJobID: String, spoke
     val services = repo.database.optJSONArray("services") ?: JSONArray()
     val templates = repo.database.optJSONArray("templates") ?: JSONArray()
     val checklists = repo.database.optJSONArray("checklists") ?: JSONArray()
-    var selected by remember { mutableStateOf(initialJobID.ifBlank { jobs.firstOrNull()?.optString("id").orEmpty() }) }
-    var title by remember { mutableStateOf("") }; var text by remember { mutableStateOf(spoken) }; var notes by remember { mutableStateOf("") }; var materialsText by remember { mutableStateOf("") }; var customer by remember { mutableStateOf("") }; var quantity by remember { mutableStateOf("1") }; var selectedChecks by remember { mutableStateOf(setOf<String>()) }; var workerSignature by remember { mutableStateOf("") }; var customerSignature by remember { mutableStateOf("") }; var error by remember { mutableStateOf("") }
-    var expandWorkText by remember { mutableStateOf(false) }
+    var selected by rememberSaveable { mutableStateOf(initialJobID.ifBlank { jobs.firstOrNull()?.optString("id").orEmpty() }) }
+    var title by rememberSaveable { mutableStateOf("") }; var text by rememberSaveable { mutableStateOf(spoken) }; var notes by rememberSaveable { mutableStateOf("") }; var materialsText by rememberSaveable { mutableStateOf("") }; var customer by rememberSaveable { mutableStateOf(jobs.firstOrNull { it.optString("id") == initialJobID }?.optString("customer").orEmpty()) }; var selectedChecks by remember { mutableStateOf(setOf<String>()) }; var workerSignature by rememberSaveable { mutableStateOf("") }; var customerSignature by rememberSaveable { mutableStateOf("") }; var error by rememberSaveable { mutableStateOf("") }
+    var expandWorkText by rememberSaveable { mutableStateOf(false) }
     var expandedCatalog by remember { mutableStateOf("") }
+    var showCustomerPicker by remember { mutableStateOf(false) }
+    var showNewCustomer by remember { mutableStateOf(false) }
+    var customerQuery by remember { mutableStateOf("") }
+    var newCustomerName by remember { mutableStateOf("") }; var newCustomerAddress by remember { mutableStateOf("") }; var newCustomerPhone by remember { mutableStateOf("") }; var newCustomerEmail by remember { mutableStateOf("") }
+    var catalogQuery by remember { mutableStateOf("") }; var catalogQuantity by remember { mutableStateOf("1") }
+    LaunchedEffect(selected) { jobs.firstOrNull { it.optString("id") == selected }?.optString("customer")?.let { if (it.isNotBlank()) customer = it } }
     LaunchedEffect(spoken) { if (spoken.isNotBlank()) text = if (text.isBlank()) spoken else text + "\n" + spoken }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("Monteurbericht") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -405,17 +417,12 @@ private fun ReportEditorDialog(repo: AlboRepository, initialJobID: String, spoke
                 Box(Modifier.matchParentSize().clickable { expandWorkText = true })
             }
             OutlinedButton(onClick = onSpeak) { Icon(Icons.Default.Mic, null); Text("Satz diktieren") }
-            OutlinedTextField(quantity, { quantity = it }, label = { Text("Menge für Katalogauswahl") }, modifier = Modifier.fillMaxWidth())
-            OutlinedButton(onClick = { expandedCatalog = if (expandedCatalog == "services") "" else "services" }, modifier = Modifier.fillMaxWidth()) { Text(if (expandedCatalog == "services") "Leistungskatalog schließen" else "Leistungskatalog öffnen") }
-            if (expandedCatalog == "services") {
-                if (services.length() == 0) Text("Der Leistungskatalog ist noch leer.", style = MaterialTheme.typography.bodySmall)
-                (0 until services.length()).mapNotNull { services.optJSONObject(it) }.forEach { item -> TextButton(onClick = { materialsText += (if (materialsText.isBlank()) "" else "\n") + "Leistung: " + item.optString("name") + " × " + quantity.ifBlank { "1" } + " " + item.optString("unit", "") }) { Text("+ ${item.optString("name")}") } }
-            }
-            OutlinedButton(onClick = { expandedCatalog = if (expandedCatalog == "materials") "" else "materials" }, modifier = Modifier.fillMaxWidth()) { Text(if (expandedCatalog == "materials") "Materialkatalog schließen" else "Materialkatalog öffnen") }
-            if (expandedCatalog == "materials") {
-                if (materials.length() == 0) Text("Der Materialkatalog ist noch leer.", style = MaterialTheme.typography.bodySmall)
-                (0 until materials.length()).mapNotNull { materials.optJSONObject(it) }.forEach { item -> TextButton(onClick = { materialsText += (if (materialsText.isBlank()) "" else "\n") + "Material: " + item.optString("name") + " × " + quantity.ifBlank { "1" } + " " + item.optString("unit", "") }) { Text("+ ${item.optString("name")}") } }
-            }
+            Text("Kunde", fontWeight = FontWeight.SemiBold)
+            OutlinedTextField(customer, { customer = it }, label = { Text("Kundenname") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            OutlinedButton(onClick = { showCustomerPicker = true }, modifier = Modifier.fillMaxWidth()) { Text("Kunde suchen / auswählen") }
+            OutlinedButton(onClick = { showNewCustomer = true }, modifier = Modifier.fillMaxWidth()) { Text("Neuen Kunden anlegen") }
+            OutlinedButton(onClick = { expandedCatalog = "services"; catalogQuery = "" }, modifier = Modifier.fillMaxWidth()) { Text("Leistungskatalog öffnen") }
+            OutlinedButton(onClick = { expandedCatalog = "materials"; catalogQuery = "" }, modifier = Modifier.fillMaxWidth()) { Text("Materialkatalog öffnen") }
             OutlinedTextField(materialsText, { materialsText = it }, label = { Text("Material und Leistungen · ohne Preise") }, modifier = Modifier.fillMaxWidth().height(90.dp))
             if (checklists.length() > 0) {
                 Text("Checklisten", fontWeight = FontWeight.SemiBold)
@@ -437,7 +444,7 @@ private fun ReportEditorDialog(repo: AlboRepository, initialJobID: String, spoke
     }, dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } })
     if (expandWorkText) Dialog(onDismissRequest = { expandWorkText = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize().padding(12.dp), shape = RoundedCornerShape(18.dp), color = Color.White) {
-            Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.fillMaxSize().navigationBarsPadding().imePadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("Durchgeführte Arbeiten", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     TextButton(onClick = { expandWorkText = false }) { Text("Schließen") }
@@ -447,6 +454,30 @@ private fun ReportEditorDialog(repo: AlboRepository, initialJobID: String, spoke
             }
         }
     }
+    if (expandedCatalog.isNotBlank()) {
+        val rows = (if (expandedCatalog == "services") services else materials).let { array -> (0 until array.length()).mapNotNull { array.optJSONObject(it) } }.filter { it.optString("name").contains(catalogQuery, true) }
+        AlertDialog(onDismissRequest = { expandedCatalog = "" }, title = { Text(if (expandedCatalog == "services") "Leistung auswählen" else "Material auswählen") }, text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(catalogQuery, { catalogQuery = it }, label = { Text("Suchen") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(catalogQuantity, { catalogQuantity = it }, label = { Text("Anzahl") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                if (rows.isEmpty()) Text("Der Katalog ist noch leer.")
+                rows.forEach { item -> OutlinedButton(onClick = { val amount = catalogQuantity.toDoubleOrNull() ?: 1.0; if (amount > 0) { materialsText += (if (materialsText.isBlank()) "" else "\n") + (if (expandedCatalog == "services") "Leistung: " else "Material: ") + item.optString("name") + " × " + amount + " " + item.optString("unit", ""); expandedCatalog = "" } }, modifier = Modifier.fillMaxWidth()) { Text("${item.optString("name")} · auswählen") } }
+            }
+        }, confirmButton = { TextButton(onClick = { expandedCatalog = "" }) { Text("Schließen") } })
+    }
+    if (showCustomerPicker) {
+        val customers = (0 until (repo.database.optJSONArray("customers")?.length() ?: 0)).mapNotNull { repo.database.optJSONArray("customers")?.optJSONObject(it) }
+        AlertDialog(onDismissRequest = { showCustomerPicker = false }, title = { Text("Kunde suchen") }, text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedTextField(customerQuery, { customerQuery = it }, label = { Text("Kundenname eingeben") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            customers.filter { it.optString("name").contains(customerQuery, true) || it.optString("companyName").contains(customerQuery, true) || it.optString("firstName").contains(customerQuery, true) || it.optString("lastName").contains(customerQuery, true) }.forEach { c -> TextButton(onClick = { customer = customerDisplay(c); jobs.firstOrNull { it.optString("customer").equals(customer, true) }?.optString("id")?.let { selected = it }; showCustomerPicker = false }) { Text(customerDisplay(c)) } }
+        } }, confirmButton = { TextButton(onClick = { customer = customerQuery.trim(); showCustomerPicker = false }) { Text("Text übernehmen") } }, dismissButton = { TextButton(onClick = { showCustomerPicker = false }) { Text("Abbrechen") } })
+    }
+    if (showNewCustomer) AlertDialog(onDismissRequest = { showNewCustomer = false }, title = { Text("Neuen Kunden anlegen") }, text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(newCustomerName, { newCustomerName = it }, label = { Text("Name / Firma") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(newCustomerAddress, { newCustomerAddress = it }, label = { Text("Adresse") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(newCustomerPhone, { newCustomerPhone = it }, label = { Text("Telefon") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(newCustomerEmail, { newCustomerEmail = it }, label = { Text("E-Mail") }, modifier = Modifier.fillMaxWidth())
+    } }, confirmButton = { TextButton(onClick = { try { repo.addCustomer(newCustomerName, newCustomerAddress, newCustomerPhone, newCustomerEmail); customer = newCustomerName.trim(); showNewCustomer = false } catch (e: Exception) { error = e.message ?: "Kunde konnte nicht angelegt werden." } }, enabled = newCustomerName.isNotBlank()) { Text("Kunde speichern") } }, dismissButton = { TextButton(onClick = { showNewCustomer = false }) { Text("Abbrechen") } })
 }
 
 @Composable
@@ -497,6 +528,7 @@ private fun jobName(repo: AlboRepository, jobID: String): String {
     if (jobID.isBlank() || jobID == "null") return "Werkstatt"
     return (0 until repo.jobs.length()).mapNotNull { repo.jobs.optJSONObject(it) }.firstOrNull { it.optString("id").equals(jobID, true) }?.let { "${it.optString("customer")} · ${it.optString("title")}" } ?: "Baustelle"
 }
+private fun customerDisplay(customer: JSONObject): String = customer.optString("companyName").ifBlank { customer.optString("name").ifBlank { listOf(customer.optString("firstName"), customer.optString("lastName")).filter { it.isNotBlank() }.joinToString(" ") } }
 private fun projectSeconds(repo: AlboRepository, jobID: String): Double {
     val saved = (0 until repo.entries.length()).mapNotNull { repo.entries.optJSONObject(it) }.filter { it.optString("jobID").equals(jobID, true) }.sumOf { it.optDouble("paidSeconds", it.optDouble("end") - it.optDouble("start")) }
     val current = repo.database.objectValue("clocks").optJSONObject(repo.employee)
