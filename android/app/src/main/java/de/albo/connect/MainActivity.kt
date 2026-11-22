@@ -108,6 +108,7 @@ import java.util.Locale
 
 private val BrandBlue = Color(0xFF075FC7)
 private val PageBackground = Color(0xFFF1F5FA)
+private fun JSONObject.arrayRead(name: String): JSONArray = optJSONArray(name) ?: JSONArray()
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -463,8 +464,8 @@ private fun employeeDaySeconds(entries: List<JSONObject>, day: LocalDate): Long 
 
 private fun yearOvertime(repo: AlboRepository): Triple<Double, Double, Double> {
     val entries = (0 until repo.entries.length()).mapNotNull { repo.entries.optJSONObject(it) }.filter { it.optString("employee") == repo.employee }
-    val absences = (0 until repo.database.array("absences").length()).mapNotNull { repo.database.optJSONArray("absences")?.optJSONObject(it) }.filter { it.optString("employee") == repo.employee }
-    val uses = (0 until repo.database.array("overtimeUses").length()).mapNotNull { repo.database.optJSONArray("overtimeUses")?.optJSONObject(it) }.filter { it.optString("employee") == repo.employee }
+    val absences = (0 until repo.database.arrayRead("absences").length()).mapNotNull { repo.database.arrayRead("absences").optJSONObject(it) }.filter { it.optString("employee") == repo.employee }
+    val uses = (0 until repo.database.arrayRead("overtimeUses").length()).mapNotNull { repo.database.arrayRead("overtimeUses").optJSONObject(it) }.filter { it.optString("employee") == repo.employee }
     fun target(day: LocalDate): Long = when (day.dayOfWeek) {
         DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY -> 30600L
         DayOfWeek.FRIDAY -> 18000L
@@ -505,7 +506,7 @@ private fun yearOvertime(repo: AlboRepository): Triple<Double, Double, Double> {
 private fun TimeYearOverview(repo: AlboRepository, onOpenAbsence: () -> Unit) {
     val year = LocalDate.now().year
     val entries = (0 until repo.entries.length()).mapNotNull { repo.entries.optJSONObject(it) }.filter { it.optString("employee") == repo.employee }
-    val absences = (0 until repo.database.array("absences").length()).mapNotNull { repo.database.optJSONArray("absences")?.optJSONObject(it) }.filter { it.optString("employee") == repo.employee }
+    val absences = (0 until repo.database.arrayRead("absences").length()).mapNotNull { repo.database.arrayRead("absences").optJSONObject(it) }.filter { it.optString("employee") == repo.employee }
     val vacationUsed = absences.filter { it.optString("type") == "Urlaub" }.sumOf { daysInYear(it, year, true) }
     val sickDays = absences.filter { it.optString("type") == "Krankmeldung" }.sumOf { daysInYear(it, year) }
     val ledger = yearOvertime(repo)
@@ -562,14 +563,14 @@ private fun TimeAbsenceForm(repo: AlboRepository, onChanged: () -> Unit) {
             } else {
                 val endDate = LocalDate.parse(until)
                 require(!endDate.isBefore(startDate)) { "Das Enddatum darf nicht vor dem Startdatum liegen." }
-                repo.updateFrom { db -> db.array("absences").put(JSONObject().put("id", java.util.UUID.randomUUID().toString().uppercase()).put("type", type).put("employee", repo.employee).put("start", startDate.atStartOfDay(ZoneId.systemDefault()).toEpochSecond() - 978307200L).put("end", endDate.atTime(23, 59, 59).atZone(ZoneId.systemDefault()).toEpochSecond() - 978307200L).put("status", if (type == "Urlaub") "Beantragt" else "Gemeldet")) }
+                repo.updateFrom { db -> (db.optJSONArray("absences") ?: JSONArray().also { db.put("absences", it) }).put(JSONObject().put("id", java.util.UUID.randomUUID().toString().uppercase()).put("type", type).put("employee", repo.employee).put("start", startDate.atStartOfDay(ZoneId.systemDefault()).toEpochSecond() - 978307200L).put("end", endDate.atTime(23, 59, 59).atZone(ZoneId.systemDefault()).toEpochSecond() - 978307200L).put("status", if (type == "Urlaub") "Beantragt" else "Gemeldet")) }
             }
             message = type + " gespeichert."; onChanged()
         } catch (e: Exception) { message = e.message ?: "Eintrag konnte nicht gespeichert werden." }
     }, modifier = Modifier.fillMaxWidth()) { Text("Eintrag speichern") }
     if (message.isNotBlank()) Text(message, color = BrandBlue)
-    val absences = (0 until repo.database.array("absences").length()).mapNotNull { repo.database.optJSONArray("absences")?.optJSONObject(it) }.filter { it.optString("employee") == repo.employee }.sortedByDescending { it.optDouble("start") }
-    val uses = (0 until repo.database.array("overtimeUses").length()).mapNotNull { repo.database.optJSONArray("overtimeUses")?.optJSONObject(it) }.filter { it.optString("employee") == repo.employee }.sortedByDescending { it.optDouble("date") }
+    val absences = (0 until repo.database.arrayRead("absences").length()).mapNotNull { repo.database.arrayRead("absences").optJSONObject(it) }.filter { it.optString("employee") == repo.employee }.sortedByDescending { it.optDouble("start") }
+    val uses = (0 until repo.database.arrayRead("overtimeUses").length()).mapNotNull { repo.database.arrayRead("overtimeUses").optJSONObject(it) }.filter { it.optString("employee") == repo.employee }.sortedByDescending { it.optDouble("date") }
     Text("Meine Einträge", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
     absences.forEach { Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.padding(12.dp)) { Text(it.optString("type"), fontWeight = FontWeight.SemiBold); Text(formatDate(it.optDouble("start")) + " – " + formatDate(it.optDouble("end")) + " · " + it.optString("status"), style = MaterialTheme.typography.bodySmall) } } }
     uses.forEach { Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) { Text("Überstundenabbau · " + formatDate(it.optDouble("date"))); Text(formatDuration(it.optDouble("hours") * 3600)) } } }
@@ -777,7 +778,12 @@ private fun ProjectWorkspaceDialog(
                     }
                 }
                 Row(Modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    pageLabels.forEachIndexed { i, (key, label) -> androidx.compose.material3.NavigationBarItem(selected = page == key, onClick = { page = key }, icon = { Icon(pageIcons[i], contentDescription = label) }, label = { Text(label, maxLines = 1) }) }
+                    pageLabels.forEachIndexed { i, (key, label) ->
+                        Column(Modifier.weight(1f).clickable { page = key }.padding(vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(pageIcons[i], contentDescription = label, tint = if (page == key) BrandBlue else Color.DarkGray)
+                            Text(label, maxLines = 1, style = MaterialTheme.typography.labelSmall, color = if (page == key) BrandBlue else Color.DarkGray)
+                        }
+                    }
                 }
             }
         }
