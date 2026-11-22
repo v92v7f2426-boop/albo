@@ -170,7 +170,23 @@ document.addEventListener('click',async event=>{const button=event.target.closes
  if(a==='appointments-list'){appointmentID=null;render();return;}
  if(a==='appointment-start-time'){const appointment=db.appointments.find(x=>x.id===button.dataset.id),identity=workspace.identity||{};if(!appointment?.jobID||!getJob(appointment.jobID)){notify('Diesem Termin ist kein gültiges Projekt zugeordnet.',true);return;}if(identity.role!=='admin'&&appointment.employeeID!==identity.employeeID){notify('Dieser Termin ist einem anderen Mitarbeiter zugeordnet.',true);return;}await startWork(appointment.jobID,appointment.id);}
  if(a==='open-job'){selectedJobID=button.dataset.id;page='jobs';render();return;}
- if(a==='delete-job'&&workspace.identity?.role==='admin'){const id=button.dataset.id,referenced=db.reports.some(r=>r.jobID===id)||db.entries.some(e=>e.jobID===id)||Object.values(db.clocks||{}).some(c=>c.jobID===id)||db.appointments.some(a=>a.jobID===id);if(referenced){notify('Das Projekt hat bereits Termine, Berichte oder Arbeitszeiten und kann deshalb nicht gelöscht werden. Bitte schließe es ab.',true);return;}const job=db.jobs.find(j=>j.id===id);if(!job||!confirm(`Projekt „${job.customer} · ${job.title}“ dauerhaft löschen?`))return;db.jobs=db.jobs.filter(j=>j.id!==id);if(await save()){render();notify('Projekt gelöscht.');}return;}
+ if(a==='delete-job'&&workspace.identity?.role==='admin'){
+  const id=button.dataset.id,job=db.jobs.find(j=>j.id===id);if(!job)return;
+  const reportCount=db.reports.filter(report=>report.jobID===id).length,timeCount=db.entries.filter(entry=>entry.jobID===id).length,appointmentCount=db.appointments.filter(item=>item.jobID===id).length,clockNames=Object.entries(db.clocks||{}).filter(([,clock])=>clock.jobID===id).map(([name])=>name);
+  const related=[reportCount&&`${reportCount} ${reportCount===1?'Bericht':'Berichte'}`,timeCount&&`${timeCount} ${timeCount===1?'Zeiterfassung':'Zeiterfassungen'}`,appointmentCount&&`${appointmentCount} ${appointmentCount===1?'Termin':'Termine'}`,clockNames.length&&`${clockNames.length} laufende ${clockNames.length===1?'Zeiterfassung':'Zeiterfassungen'}`].filter(Boolean);
+  const details=related.length?` Zusätzlich werden ${related.join(', ')} dieses Projekts gelöscht.`:'';
+  if(!confirm(`Projekt „${job.customer} · ${job.title}“ dauerhaft löschen?${details} Diese Daten können danach nicht wiederhergestellt werden.`))return;
+  const before=structuredClone(db);
+  db.jobs=db.jobs.filter(item=>item.id!==id);
+  db.reports=db.reports.filter(report=>report.jobID!==id);
+  db.entries=db.entries.filter(entry=>entry.jobID!==id);
+  db.appointments=db.appointments.filter(item=>item.jobID!==id);
+  for(const name of clockNames)delete db.clocks[name];
+  if(selectedJobID===id)selectedJobID=null;
+  if(await save()){render();notify('Projekt und zugehörige Daten gelöscht.');}
+  else{db=before;render();}
+  return;
+ }
  if(a==='jobs-list'){selectedJobID=null;render();return;}
  if(a==='start-job-time'){const job=db.jobs.find(j=>j.id===button.dataset.id);if(job)await startWork(job.id);}
  if(a==='worker-start-unassigned'||a==='start-workshop')await startWork(null,null,'Werkstatt');
