@@ -13,6 +13,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.KeyStore
 import java.util.UUID
+import java.time.LocalDate
+import java.time.ZoneId
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -92,6 +94,7 @@ class AlboRepository(context: Context) {
     val jobs: JSONArray get() = database.array("jobs")
     val entries: JSONArray get() = database.array("entries")
     val reports: JSONArray get() = database.array("reports")
+    val photos: JSONObject get() = root.optJSONObject("photos") ?: JSONObject().also { root.put("photos", it) }
     private fun commit() { root.put("pendingSync", true); vault.write(root) }
     fun saveConnection(server: String, token: String) {
         validateServer(server)
@@ -175,13 +178,14 @@ class AlboRepository(context: Context) {
         val baseRevision = if (same) sync.optInt("revision", -1) else -1
         val payload = JSONObject().put("workspaceID", remote.getString("workspaceID"))
             .put("baseRevision", if (same && baseRevision >= 0) baseRevision else JSONObject.NULL)
-            .put("backup", JSONObject().put("version", 1).put("database", database.copyObject()).put("photos", JSONObject()))
+            .put("backup", JSONObject().put("version", 1).put("database", database.copyObject()).put("photos", JSONObject(photos.toString())))
         if (same && sync.has("baseline") && sync.has("proof")) {
             payload.put("baseSnapshot", JSONObject().put("revision", baseRevision).put("proof", sync.getString("proof")).put("database", JSONObject(sync.getString("baseline"))))
         } else {
             val hasLocalWork = listOf("jobs", "reports", "entries", "customers", "absences", "overtimeUses").any { database.array(it).length() > 0 } || database.objectValue("clocks").length() > 0
             if (hasLocalWork) error("Auf diesem Gerät gibt es noch keinen PC-Ausgangsstand. Sichere die lokalen Daten und führe den ersten Abgleich mit einem leeren Mitarbeitergerät durch.")
             root.put("database", remoteDb)
+            root.put("photos", remote.optJSONObject("backup")?.optJSONObject("photos") ?: JSONObject())
             remote.optJSONObject("identity")?.let { identity ->
                 root.put("identity", identity)
                 val employeeID = identity.optString("employeeID")
@@ -197,6 +201,7 @@ class AlboRepository(context: Context) {
         val updated = request("sync", "POST", payload)
         val updatedDb = updated.getJSONObject("backup").getJSONObject("database")
         root.put("database", updatedDb)
+        root.put("photos", updated.optJSONObject("backup")?.optJSONObject("photos") ?: photos)
         updated.optJSONObject("identity")?.let { identity ->
             root.put("identity", identity)
             val employeeID = identity.optString("employeeID")
@@ -305,12 +310,37 @@ class AlboRepository(context: Context) {
             .put("start", clock.optDouble("started")).put("end", now).put("paidSeconds", elapsed).put("breaks", clock.array("breaks")).put("employee", employee)
         entries.put(entry); clocks.remove(employee); commit()
     }
-    fun addReport(jobID: String, title: String, text: String, internalNotes: String, materials: String, checklistIDs: Set<String>, customerName: String, workerSignature: String, customerSignature: String) {
-        require(title.isNotBlank() && text.isNotBlank()) { "Bitte Überschrift und Arbeitsbeschreibung eintragen." }
-        reports.put(JSONObject().put("id", id()).put("jobID", jobID).put("date", nowSeconds()).put("author", employee).put("title", title.trim()).put("text", text.trim())
-            .put("internalNotes", internalNotes.trim()).put("checklistIDs", JSONArray(checklistIDs.toList())).put("materials", materials.trim()).put("photos", JSONArray()).put("measurements", JSONArray()).put("positions", JSONArray())
-            .put("customerName", customerName.trim()).put("completed", customerName.isNotBlank() && workerSignature.isNotBlank() && customerSignature.isNotBlank()).apply { if (workerSignature.isNotBlank()) put("workerSignature", workerSignature); if (customerSignature.isNotBlank()) put("customerSignature", customerSignature) })
+    fun addAbsence(type: String, startDate: String, endDate: String) {
+        require(type == "Krankmeldung" || type == "Urlaub") { "Ungültige Abwesenheitsart." }
+        val start = LocalDate.parse(startDate).atStartOfDay(ZoneId.systemDefault()).toEpochSecond() - SWIFT_EPOCH
+        val end = LocalDate.parse(endDate).atTime(23, 59, 59).atZone(ZoneId.systemDefault()).toEpochSecond() - SWIFT_EPOCH
+        require(end >= start) { "Das Enddatum darf nicht vor dem Startdatum liegen." }
+        database.array("absences").put(JSONObject().put("id", id()).put("type", type).put("employee", employee).put("start", start).put("end", end).put("status", if (type == "Urlaub") "Beantragt" else "Gemeldet"))
         commit()
+    }
+    fun addOvertimeUse(date: String, hours: Double, note: String = "") {
+        require(hours > 0 && hours <= 24 && (hours * 4.0) % 1.0 == 0.0) { "Stunden bitte in Viertelstunden angeben." }
+        val timestamp = LocalDate.parse(date).atStartOfDay(ZoneId.systemDefault()).toEpochSecond() - SWIFT_EPOCH
+        database.array("overtimeUses").put(JSONObject().put("id", id()).put("employee", employee).put("date", timestamp).put("hours", hours).put("note", note.trim()))
+        commit()
+    }
+    fun addReport(jobID: String, title: String, text: String, internalNotes: String, materials: String, checklistIDs: Set<String>, customerName: String, workerSignature: String, customerSignature: String, photoData: List<String> = emptyList(), positions: JSONArray = JSONArray(), status: String = "Folgetermin notwendig", reportID: String = "", completed: Boolean = true): String {
+        require(title.isNotBlank() && text.isNotBlank()) { "Bitte Überschrift und Arbeitsbeschreibung eintragen." }
+        val photoRows = JSONArray()
+        photoData.forEach { encoded ->
+            val photoID = id()
+            val filename = "$photoID.jpg"
+            photos.put(filename, encoded)
+            photoRows.put(JSONObject().put("id", photoID).put("filename", filename).put("caption", "Baustellendokumentation"))
+        }
+        val report = JSONObject().put("id", reportID.ifBlank { id() }).put("jobID", jobID).put("date", nowSeconds()).put("author", employee).put("title", title.trim()).put("text", text.trim())
+            .put("internalNotes", internalNotes.trim()).put("checklistIDs", JSONArray(checklistIDs.toList())).put("materials", materials.trim()).put("photos", photoRows).put("measurements", JSONArray()).put("positions", positions)
+            .put("projectStatus", status)
+            .put("customerName", customerName.trim()).put("completed", completed && customerName.isNotBlank() && workerSignature.isNotBlank() && customerSignature.isNotBlank()).apply { if (workerSignature.isNotBlank()) put("workerSignature", workerSignature); if (customerSignature.isNotBlank()) put("customerSignature", customerSignature) }
+        val existing = (0 until reports.length()).mapNotNull { reports.optJSONObject(it) }.indexOfFirst { it.optString("id").equals(report.optString("id"), true) }
+        if (existing >= 0) reports.put(existing, report) else reports.put(report)
+        commit()
+        return report.optString("id")
     }
     fun updateFrom(transform: (JSONObject) -> Unit) { transform(database); commit() }
     companion object { fun nowSeconds() = System.currentTimeMillis() / 1000.0 - SWIFT_EPOCH }

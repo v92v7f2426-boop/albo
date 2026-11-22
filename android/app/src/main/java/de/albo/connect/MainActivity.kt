@@ -43,6 +43,11 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -93,11 +98,16 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
+import java.time.DayOfWeek
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.temporal.TemporalAdjusters
 import java.util.Date
 import java.util.Locale
 
-private val BrandBlue = Color(0xFF005BBB)
-private val PageBackground = Color(0xFFEAF0F6)
+private val BrandBlue = Color(0xFF075FC7)
+private val PageBackground = Color(0xFFF1F5FA)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -112,9 +122,11 @@ private fun AlboApp(context: android.content.Context) {
     val repository = remember { AlboRepository(context) }
     var revision by remember { mutableIntStateOf(0) }
     var tab by remember { mutableIntStateOf(0) }
+    var archiveReports by rememberSaveable { mutableStateOf(false) }
     var showJobEditor by remember { mutableStateOf(false) }
     var showReportEditor by remember { mutableStateOf(false) }
     var reportJobID by remember { mutableStateOf("") }
+    var reportPhotos by rememberSaveable { mutableStateOf(listOf<String>()) }
     var server by remember { mutableStateOf(repository.root.optJSONObject("connection")?.optString("server", "") ?: "") }
     var token by remember { mutableStateOf(repository.root.optJSONObject("connection")?.optString("token", "") ?: "") }
     var loginUsername by remember { mutableStateOf("") }
@@ -122,8 +134,23 @@ private fun AlboApp(context: android.content.Context) {
     var syncMessage by remember { mutableStateOf("") }
     var syncBusy by remember { mutableStateOf(false) }
     var clockTick by remember { mutableIntStateOf(0) }
+    var loginComplete by remember { mutableStateOf(repository.root.optJSONObject("identity") != null) }
     val snack = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) try {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                val bitmap = BitmapFactory.decodeStream(stream)
+                if (bitmap != null) {
+                    val scaled = if (bitmap.width > 1600) android.graphics.Bitmap.createScaledBitmap(bitmap, 1600, (bitmap.height * 1600f / bitmap.width).toInt(), true) else bitmap
+                    val bytes = java.io.ByteArrayOutputStream().use { out -> scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 78, out); out.toByteArray() }
+                    reportPhotos = reportPhotos + Base64.encodeToString(bytes, Base64.NO_WRAP)
+                    if (scaled !== bitmap) scaled.recycle()
+                    bitmap.recycle()
+                }
+            }
+        } catch (_: Exception) { scope.launch { snack.showSnackbar("Foto konnte nicht geladen werden.") } }
+    }
     LaunchedEffect(Unit) { while (true) { delay(1000); clockTick++ } }
     LaunchedEffect(repository) {
         while (true) {
@@ -136,27 +163,34 @@ private fun AlboApp(context: android.content.Context) {
             }
         }
     }
-    val tabs = listOf("Start", "Baustellen", "Berichte", "Zeiten", "Archiv", "Mehr")
-    val icons = listOf(Icons.Default.Home, Icons.Default.Build, Icons.Default.Assignment, Icons.Default.PlayArrow, Icons.Default.Archive, Icons.Default.MoreHoriz)
+    val tabs = listOf("Start", "Baustellen", "Zeiten", "Archiv", "Mehr")
+    val icons = listOf(Icons.Default.Home, Icons.Default.Build, Icons.Default.PlayArrow, Icons.Default.Archive, Icons.Default.MoreHoriz)
     MaterialTheme(colorScheme = MaterialTheme.colorScheme.copy(primary = BrandBlue, secondary = BrandBlue, background = PageBackground)) {
         Scaffold(
             snackbarHost = { SnackbarHost(snack) },
             topBar = { TopAppBar(title = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Image(painterResource(R.drawable.albo_launcher), contentDescription = "ALBO Logo", modifier = Modifier.size(30.dp)); Text("ALBO Connect", fontWeight = FontWeight.Bold) } }) },
-            bottomBar = { NavigationBar { tabs.forEachIndexed { index, title -> NavigationBarItem(selected = tab == index, onClick = { tab = index }, icon = { Icon(icons[index], contentDescription = title) }, label = { Text(title) }) } } },
-            floatingActionButton = {
-                when (tab) {
-                    1 -> if (repository.canManage) FloatingActionButton(onClick = { showJobEditor = true }) { Text("+") }
-                    2 -> FloatingActionButton(onClick = { reportJobID = repository.jobs.optJSONObject(0)?.optString("id").orEmpty(); showReportEditor = true }) { Text("+") }
-                }
-            }
+            bottomBar = { if (loginComplete) NavigationBar { tabs.forEachIndexed { index, title -> NavigationBarItem(selected = tab == index, onClick = { tab = index }, icon = { Icon(icons[index], contentDescription = title) }, label = { Text(title) }) } } },
+            floatingActionButton = { if (loginComplete && tab == 1 && repository.canManage) FloatingActionButton(onClick = { showJobEditor = true }) { Text("+") } }
         ) { inset ->
             Box(Modifier.fillMaxSize().background(PageBackground).padding(inset)) {
-                when (tab) {
-                    0 -> HomeScreen(repository, revision, clockTick) { tab = it }
-                    1 -> JobsScreen(repository, revision, clockTick, archivedInitial = false, onNavigate = { tab = it }, onOpenReport = { reportJobID = it; showReportEditor = true }, onRefresh = { revision++ }, onError = { scope.launch { snack.showSnackbar(it) } })
-                    2 -> ReportsScreen(repository, revision, onNew = { reportJobID = it; showReportEditor = true }, onChanged = { revision++ }, onError = { scope.launch { snack.showSnackbar(it) } })
-                    3 -> TimeScreen(repository, revision, clockTick, onChanged = { revision++ })
-                    4 -> JobsScreen(repository, revision, clockTick, archivedInitial = true, onNavigate = { tab = it }, onOpenReport = { reportJobID = it; showReportEditor = true }, onRefresh = { revision++ }, onError = { scope.launch { snack.showSnackbar(it) } })
+                if (!loginComplete) FirstLoginScreen(server, { server = it }, loginUsername, { loginUsername = it }, loginPassword, { loginPassword = it }, syncBusy, syncMessage, onLogin = {
+                    scope.launch {
+                        syncBusy = true; syncMessage = "Anmeldung läuft …"
+                        try {
+                            syncMessage = repository.login(server, loginUsername, loginPassword)
+                            token = repository.root.optJSONObject("connection")?.optString("token", "").orEmpty()
+                            loginPassword = ""; loginComplete = true; revision++
+                            try { syncMessage += "\n" + repository.synchronize(); revision++ }
+                            catch (e: Exception) { syncMessage += "\nAnmeldung gespeichert. Abgleich wartet auf PC-Verbindung: ${e.message ?: "Server nicht erreichbar"}" }
+                        } catch (e: Exception) { syncMessage = e.message ?: "Anmeldung fehlgeschlagen." }
+                        finally { syncBusy = false }
+                    }
+                }) else when (tab) {
+                    0 -> HomeScreen(repository, revision, clockTick) { next -> if (next == 5) { tab = 3; archiveReports = true } else tab = next }
+                    1 -> JobsScreen(repository, revision, clockTick, archivedInitial = false, onNavigate = { if (it == 4) tab = 3 else tab = it }, onOpenReport = { reportJobID = it; showReportEditor = true }, onOpenReports = {}, onRefresh = { revision++ }, onError = { scope.launch { snack.showSnackbar(it) } })
+                    2 -> TimeScreen(repository, revision, clockTick, onChanged = { revision++ })
+                    3 -> if (archiveReports) ReportsScreen(repository, revision, onNew = { reportJobID = it; showReportEditor = true }, onChanged = { revision++ }, onError = { scope.launch { snack.showSnackbar(it) } }, onBack = { archiveReports = false })
+                         else JobsScreen(repository, revision, clockTick, archivedInitial = true, onNavigate = { tab = it }, onOpenReport = { reportJobID = it; showReportEditor = true }, onOpenReports = { archiveReports = true }, onRefresh = { revision++ }, onError = { scope.launch { snack.showSnackbar(it) } })
                     else -> MoreScreen(repository, revision, server, token, syncMessage, syncBusy, loginUsername, loginPassword,
                         onServer = { server = it }, onToken = { token = it },
                         onLoginUsername = { loginUsername = it }, onLoginPassword = { loginPassword = it },
@@ -172,18 +206,37 @@ private fun AlboApp(context: android.content.Context) {
         val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) pendingSpokenText = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull().orEmpty()
         }
-        ReportEditorDialog(repository, reportJobID, pendingSpokenText,
-            onDismiss = { showReportEditor = false; pendingSpokenText = "" },
+        ProjectWorkspaceDialog(repository, reportJobID, pendingSpokenText, reportPhotos, clockTick,
+            onDismiss = { showReportEditor = false; pendingSpokenText = ""; reportPhotos = emptyList() },
             onSpeak = { pendingSpokenText = ""; try { speech.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply { putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM); putExtra(RecognizerIntent.EXTRA_LANGUAGE, "de-DE"); putExtra(RecognizerIntent.EXTRA_PROMPT, "Bericht diktieren") }) } catch (_: Exception) { scope.launch { snack.showSnackbar("Spracherkennung ist auf diesem Gerät nicht verfügbar.") } } },
-            onSave = { jobID, title, text, notes, materials, checks, customer, workerSignature, customerSignature ->
-                repository.addReport(jobID, title, text, notes, materials, checks, customer, workerSignature, customerSignature)
-                revision++; showReportEditor = false; pendingSpokenText = ""
-                scope.launch { syncBusy = true; try { val result = repository.synchronize(); syncMessage = result; revision++; snack.showSnackbar("Bericht gespeichert und mit dem PC abgeglichen.") } catch (e: Exception) { syncMessage = "Abgleich ausstehend: ${e.message ?: "Verbindung nicht erreichbar"}"; snack.showSnackbar("Bericht bleibt auf dem Handy gespeichert. PC-Abgleich noch offen: ${e.message ?: "Verbindung nicht erreichbar"}") } finally { syncBusy = false } }
+            onPickPhoto = { photoPicker.launch("image/*") },
+            onRemovePhoto = { index -> reportPhotos = reportPhotos.filterIndexed { i, _ -> i != index } },
+            onSave = { jobID, title, text, notes, materials, checks, customer, workerSignature, customerSignature, photos, positions, status, reportID, completed ->
+                val savedID = repository.addReport(jobID, title, text, notes, materials, checks, customer, workerSignature, customerSignature, photos, positions, status, reportID, completed)
+                revision++; if (completed) { showReportEditor = false; pendingSpokenText = ""; reportPhotos = emptyList() }
+                scope.launch { syncBusy = true; try { val result = repository.synchronize(); syncMessage = result; revision++; snack.showSnackbar(if (completed) "Bericht abgeschlossen und mit dem PC abgeglichen." else "Entwurf gespeichert und mit dem PC abgeglichen.") } catch (e: Exception) { syncMessage = "Abgleich ausstehend: ${e.message ?: "Verbindung nicht erreichbar"}"; snack.showSnackbar("${if (completed) "Bericht abgeschlossen" else "Entwurf gespeichert"} auf dem Handy. PC-Abgleich noch offen: ${e.message ?: "Verbindung nicht erreichbar"}") } finally { syncBusy = false } }
+                savedID
             })
     }
 }
 
 private var pendingSpokenText by mutableStateOf("")
+
+@Composable
+private fun FirstLoginScreen(server: String, onServer: (String) -> Unit, username: String, onUsername: (String) -> Unit, password: String, onPassword: (String) -> Unit, busy: Boolean, message: String, onLogin: () -> Unit) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Image(painterResource(R.drawable.albo_launcher), contentDescription = "ALBO Logo", modifier = Modifier.size(72.dp))
+        Text("Willkommen bei ALBO Connect", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("Melde dich mit deinem persönlichen Mitarbeiterkonto an. Du bleibst auf diesem Gerät angemeldet.", style = MaterialTheme.typography.bodyMedium)
+        Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(server, onServer, label = { Text("PC-Serveradresse") }, placeholder = { Text("http://100.x.x.x:8788") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            OutlinedTextField(username, onUsername, label = { Text("Benutzername") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            OutlinedTextField(password, onPassword, label = { Text("Passwort") }, modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation())
+            Button(onClick = onLogin, enabled = !busy && server.isNotBlank() && username.isNotBlank() && password.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text(if (busy) "Anmeldung läuft …" else "Anmelden und Gerät verbinden") }
+            if (message.isNotBlank()) Text(message, color = BrandBlue, style = MaterialTheme.typography.bodySmall)
+        } }
+    }
+}
 
 @Composable
 private fun HomeScreen(repo: AlboRepository, revision: Int, tick: Int, navigate: (Int) -> Unit) {
@@ -202,9 +255,9 @@ private fun HomeScreen(repo: AlboRepository, revision: Int, tick: Int, navigate:
             StatCard("Baustellen", repo.jobs.length().toString(), Modifier.weight(1f))
             StatCard("Berichte", repo.reports.length().toString(), Modifier.weight(1f))
         }
-        Button(onClick = { navigate(3) }, modifier = Modifier.fillMaxWidth()) { Text(if (clock == null) "Arbeitszeit starten" else "Zeiterfassung öffnen") }
+        Button(onClick = { navigate(2) }, modifier = Modifier.fillMaxWidth()) { Text(if (clock == null) "Arbeitszeit starten" else "Zeiterfassung öffnen") }
         Button(onClick = { navigate(1) }, modifier = Modifier.fillMaxWidth()) { Text("Baustellen anzeigen") }
-        Button(onClick = { navigate(2) }, modifier = Modifier.fillMaxWidth()) { Text("Berichte öffnen") }
+        Button(onClick = { navigate(5) }, modifier = Modifier.fillMaxWidth()) { Text("Abgeschlossene Berichte öffnen") }
     }
 }
 
@@ -214,18 +267,20 @@ private fun StatCard(label: String, value: String, modifier: Modifier = Modifier
 }
 
 @Composable
-private fun JobsScreen(repo: AlboRepository, revision: Int, tick: Int, archivedInitial: Boolean, onNavigate: (Int) -> Unit, onOpenReport: (String) -> Unit, onRefresh: () -> Unit, onError: (String) -> Unit) {
+private fun JobsScreen(repo: AlboRepository, revision: Int, tick: Int, archivedInitial: Boolean, onNavigate: (Int) -> Unit, onOpenReport: (String) -> Unit, onOpenReports: () -> Unit, onRefresh: () -> Unit, onError: (String) -> Unit) {
     val archived = archivedInitial
     var query by remember { mutableStateOf("") }
     var deleteID by remember { mutableStateOf("") }
     val allJobs = (0 until repo.jobs.length()).mapNotNull { repo.jobs.optJSONObject(it) }
-    val jobs = allJobs.filter { (it.optString("status") == "Abgeschlossen") == archived }
+    val jobs = allJobs.filter { isProjectCompleted(repo, it) == archived }
         .filter { !archived || "${it.optString("customer")} ${it.optString("title")} ${it.optString("address")}".contains(query, true) }
     val clock = repo.database.objectValue("clocks").optJSONObject(repo.employee)
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (archived) OutlinedButton(onClick = { onNavigate(1) }) { Text("‹ Baustellen") }
-            else OutlinedButton(onClick = { onNavigate(4) }) { Text("Abgeschlossene Projekte öffnen") }
+            if (archived) {
+                OutlinedButton(onClick = { onNavigate(1) }) { Text("‹ Baustellen") }
+                OutlinedButton(onClick = onOpenReports) { Text("Abgeschlossene Berichte") }
+            } else OutlinedButton(onClick = { onNavigate(4) }) { Text("Abgeschlossene Projekte öffnen") }
         }
         if (archived) OutlinedTextField(query, { query = it }, label = { Text("Abgeschlossene Projekte suchen") }, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp), singleLine = true)
         LazyColumn(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -243,7 +298,7 @@ private fun JobsScreen(repo: AlboRepository, revision: Int, tick: Int, archivedI
                             val runningHere = clock != null && clock.optString("jobID") == id && clock.has("segmentStart")
                             Button(onClick = { try { if (clock != null && clock.optString("jobID") == id && !clock.has("segmentStart")) repo.start(id) else if (clock == null || clock.optString("jobID") != id) repo.start(id); onRefresh() } catch (e: Exception) { onError(e.message ?: "Arbeitszeit konnte nicht gestartet werden.") } }, enabled = !runningHere) { Text(if (clock?.optString("jobID") == id) "Weiterarbeiten" else "Hier starten") }
                             OutlinedButton(onClick = { onOpenReport(id) }) { Text("Bericht schreiben") }
-                        } else OutlinedButton(onClick = { onNavigate(2) }) { Text("Berichte öffnen") }
+                        } else OutlinedButton(onClick = onOpenReports) { Text("Berichte öffnen") }
                         if (repo.canManage && !archived) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(onClick = { try { repo.completeJob(id); onRefresh() } catch (e: Exception) { onError(e.message ?: "Projekt konnte nicht abgeschlossen werden.") } }) { Text("Projekt abschließen") }
                             TextButton(onClick = { deleteID = id }) { Text("Projekt löschen") }
@@ -258,10 +313,11 @@ private fun JobsScreen(repo: AlboRepository, revision: Int, tick: Int, archivedI
 }
 
 @Composable
-private fun ReportsScreen(repo: AlboRepository, revision: Int, onNew: (String) -> Unit, onChanged: () -> Unit, onError: (String) -> Unit) {
+private fun ReportsScreen(repo: AlboRepository, revision: Int, onNew: (String) -> Unit, onChanged: () -> Unit, onError: (String) -> Unit, onBack: () -> Unit) {
     val reports = (0 until repo.reports.length()).mapNotNull { repo.reports.optJSONObject(it) }.sortedByDescending { it.optDouble("date") }
     var openReport by remember { mutableStateOf<JSONObject?>(null) }
     LazyColumn(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { OutlinedButton(onClick = onBack) { Text("‹ Abgeschlossene Projekte") } }
         if (reports.isEmpty()) item { Text("Noch keine Berichte gespeichert.", Modifier.padding(16.dp)) }
         items(reports, key = { it.optString("id") }) { report ->
             Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -331,7 +387,18 @@ private fun TimeScreen(repo: AlboRepository, revision: Int, tick: Int, onChanged
     val clock = repo.database.objectValue("clocks").optJSONObject(repo.employee)
     val jobs = (0 until repo.jobs.length()).mapNotNull { repo.jobs.optJSONObject(it) }
     val recent = (0 until repo.entries.length()).mapNotNull { repo.entries.optJSONObject(it) }.filter { it.optString("employee") == repo.employee }.sortedByDescending { it.optDouble("start") }.take(40)
+    var section by rememberSaveable { mutableStateOf("clock") }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("clock" to "Stempeln", "year" to "Jahresübersicht", "absence" to "Abwesenheit eintragen").forEach { (key, label) ->
+                if (section == key) Button(onClick = { section = key }) { Text(label) } else OutlinedButton(onClick = { section = key }) { Text(label) }
+            }
+        }
+        if (section == "year") {
+            TimeYearOverview(repo, onOpenAbsence = { section = "absence" })
+        } else if (section == "absence") {
+            TimeAbsenceForm(repo, onChanged)
+        } else {
         Text("Stempeln", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         if (clock != null) {
             Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -349,11 +416,163 @@ private fun TimeScreen(repo: AlboRepository, revision: Int, tick: Int, onChanged
             OutlinedButton(onClick = { repo.start(null); onChanged() }, modifier = Modifier.fillMaxWidth()) { Text("Werkstatt-Arbeitszeit starten") }
         }
         Text("Gespeicherte Zeiten", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        recent.forEach { entry -> Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Column { Text(formatDate(entry.optDouble("start")), fontWeight = FontWeight.SemiBold); Text(jobName(repo, entry.optString("jobID")), style = MaterialTheme.typography.bodySmall) }
-            Text(formatDuration(entry.optDouble("paidSeconds")))
-        } } }
+        recent.groupBy { dateFromSwift(it.optDouble("start")) }.toSortedMap(compareByDescending { it }).forEach { (day, dayEntries) ->
+            val gross = dayEntries.sumOf { it.optDouble("paidSeconds").toLong().coerceAtLeast(0) }
+            val hasBreak = dayEntries.any { (it.optJSONArray("breaks")?.length() ?: 0) > 0 }
+            val automatic = gross >= 21600 && !hasBreak
+            val total = (gross - if (automatic) 1800 else 0).coerceAtLeast(0)
+            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(day.format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy")), fontWeight = FontWeight.SemiBold); Text(formatDuration(total.toDouble()), color = BrandBlue, fontWeight = FontWeight.Bold) }
+                dayEntries.forEach { Text("${jobName(repo, it.optString("jobID"))} · ${formatDuration(it.optDouble("paidSeconds"))}", style = MaterialTheme.typography.bodySmall) }
+                if (automatic) Text("Pause 12:30–13:00 Uhr", style = MaterialTheme.typography.bodySmall)
+                else dayEntries.flatMap { e -> (0 until (e.optJSONArray("breaks")?.length() ?: 0)).mapNotNull { e.optJSONArray("breaks")?.optJSONObject(it) } }.forEach { b -> Text("Pause ${formatClockTime(b.optDouble("start"))}–${formatClockTime(b.optDouble("end"))} Uhr", style = MaterialTheme.typography.bodySmall) }
+            } }
+        }
+        }
     }
+}
+
+private fun dateFromSwift(seconds: Double): LocalDate = Instant.ofEpochSecond((seconds + 978307200L).toLong()).atZone(ZoneId.systemDefault()).toLocalDate()
+
+private fun daysInYear(absence: JSONObject, year: Int, weekdaysOnly: Boolean = false): Int {
+    var day = dateFromSwift(absence.optDouble("start"))
+    val end = dateFromSwift(absence.optDouble("end"))
+    var total = 0
+    while (!day.isAfter(end)) {
+        if (day.year == year && (!weekdaysOnly || (day.dayOfWeek != DayOfWeek.SATURDAY && day.dayOfWeek != DayOfWeek.SUNDAY))) total++
+        day = day.plusDays(1)
+    }
+    return total
+}
+
+private fun bwPublicHolidays(year: Int): Set<LocalDate> {
+    val a = year % 19; val b = year / 100; val c = year % 100; val d = b / 4; val e = b % 4
+    val f = (b + 8) / 25; val g = (b - f + 1) / 3; val h = (19 * a + b - d - g + 15) % 30
+    val i = c / 4; val k = c % 4; val l = (32 + 2 * e + 2 * i - h - k) % 7; val m = (a + 11 * h + 22 * l) / 451
+    val month = (h + l - 7 * m + 114) / 31; val day = (h + l - 7 * m + 114) % 31 + 1
+    val easter = LocalDate.of(year, month, day)
+    return setOf(LocalDate.of(year, 1, 1), LocalDate.of(year, 1, 6), LocalDate.of(year, 5, 1), LocalDate.of(year, 10, 3), LocalDate.of(year, 11, 1), LocalDate.of(year, 12, 25), LocalDate.of(year, 12, 26), easter.minusDays(2), easter.plusDays(1), easter.plusDays(39), easter.plusDays(50), easter.plusDays(60))
+}
+
+private fun employeeDaySeconds(entries: List<JSONObject>, day: LocalDate): Long {
+    val dayEntries = entries.filter { dateFromSwift(it.optDouble("start")) == day }
+    val worked = dayEntries.sumOf { it.optDouble("paidSeconds").toLong().coerceAtLeast(0) }
+    val hasManualBreak = dayEntries.any { (it.optJSONArray("breaks")?.length() ?: 0) > 0 }
+    return (worked - if (worked >= 21600 && !hasManualBreak) 1800 else 0).coerceAtLeast(0)
+}
+
+private fun yearOvertime(repo: AlboRepository): Triple<Double, Double, Double> {
+    val entries = (0 until repo.entries.length()).mapNotNull { repo.entries.optJSONObject(it) }.filter { it.optString("employee") == repo.employee }
+    val absences = (0 until repo.database.array("absences").length()).mapNotNull { repo.database.optJSONArray("absences")?.optJSONObject(it) }.filter { it.optString("employee") == repo.employee }
+    val uses = (0 until repo.database.array("overtimeUses").length()).mapNotNull { repo.database.optJSONArray("overtimeUses")?.optJSONObject(it) }.filter { it.optString("employee") == repo.employee }
+    fun target(day: LocalDate): Long = when (day.dayOfWeek) {
+        DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY -> 30600L
+        DayOfWeek.FRIDAY -> 18000L
+        else -> 0L
+    }
+    val workByDay = entries.groupBy { dateFromSwift(it.optDouble("start")) }
+    val firstDay = (entries.map { dateFromSwift(it.optDouble("start")) } + absences.map { dateFromSwift(it.optDouble("start")) } + uses.map { dateFromSwift(it.optDouble("date")) }).minOrNull() ?: return Triple(0.0, 0.0, 0.0)
+    var week = firstDay.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    val currentWeek = LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    val earnedWeeks = mutableListOf<Pair<LocalDate, Double>>()
+    while (!week.isAfter(currentWeek)) {
+        val weekEnd = week.plusDays(6)
+        if (!weekEnd.isAfter(LocalDate.now())) {
+            var scheduled = 0L; var actual = 0L; var credit = 0L
+            for (offset in 0..6) {
+                val day = week.plusDays(offset.toLong()); val expected = target(day); scheduled += expected
+                val worked = employeeDaySeconds(workByDay[day].orEmpty(), day); actual += worked
+                val absent = absences.any { !day.isBefore(dateFromSwift(it.optDouble("start"))) && !day.isAfter(dateFromSwift(it.optDouble("end"))) }
+                val holiday = day in bwPublicHolidays(day.year)
+                if ((absent || holiday) && expected > worked) credit += expected - worked
+            }
+            val extra = maxOf(0L, actual + credit - scheduled)
+            if (extra > 0) earnedWeeks += weekEnd to extra / 3600.0
+        }
+        week = week.plusWeeks(1)
+    }
+    val events = (earnedWeeks.map { Triple(it.first, true, it.second) } + uses.map { Triple(dateFromSwift(it.optDouble("date")), false, it.optDouble("hours")) })
+        .filter { !it.first.isAfter(LocalDate.now()) }.sortedWith(compareBy<Triple<LocalDate, Boolean, Double>> { it.first }.thenByDescending { it.second })
+    var balance = 0.0; var earned = 0.0; var paid = 0.0
+    events.forEach { (_, isEarned, hours) ->
+        if (isEarned) { earned += hours; val accepted = minOf(hours, (40.0 - balance).coerceAtLeast(0.0)); balance += accepted; paid += hours - accepted }
+        else balance = (balance - hours).coerceAtLeast(0.0)
+    }
+    return Triple(balance * 3600, paid * 3600, earned * 3600)
+}
+
+@Composable
+private fun TimeYearOverview(repo: AlboRepository, onOpenAbsence: () -> Unit) {
+    val year = LocalDate.now().year
+    val entries = (0 until repo.entries.length()).mapNotNull { repo.entries.optJSONObject(it) }.filter { it.optString("employee") == repo.employee }
+    val absences = (0 until repo.database.array("absences").length()).mapNotNull { repo.database.optJSONArray("absences")?.optJSONObject(it) }.filter { it.optString("employee") == repo.employee }
+    val vacationUsed = absences.filter { it.optString("type") == "Urlaub" }.sumOf { daysInYear(it, year, true) }
+    val sickDays = absences.filter { it.optString("type") == "Krankmeldung" }.sumOf { daysInYear(it, year) }
+    val ledger = yearOvertime(repo)
+    Text("Jahresübersicht · " + year, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        StatCard("Resturlaub", ((30 - vacationUsed).coerceAtLeast(0)).toString() + " / 30 Tage", Modifier.weight(1f))
+        StatCard("Krankheitstage", sickDays.toString(), Modifier.weight(1f))
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text("Überstundenkonto", fontWeight = FontWeight.Bold)
+        Text(formatDuration(ledger.first) + " verfügbar")
+        Text("Aufgebaut " + formatDuration(ledger.third) + " · ausgezahlt " + formatDuration(ledger.second), style = MaterialTheme.typography.bodySmall)
+    } }
+    Text("Arbeitsstunden nach Monat", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+    (1..12).forEach { month ->
+        val rows = entries.filter { dateFromSwift(it.optDouble("start")).year == year && dateFromSwift(it.optDouble("start")).monthValue == month }
+        val seconds = rows.groupBy { dateFromSwift(it.optDouble("start")) }.entries.sumOf { (day, items) -> employeeDaySeconds(items, day) }
+        Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Row(Modifier.fillMaxWidth().padding(13.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(java.time.Month.of(month).getDisplayName(java.time.format.TextStyle.FULL, Locale.GERMAN), fontWeight = FontWeight.SemiBold)
+            Text(formatDuration(seconds.toDouble()), color = BrandBlue, fontWeight = FontWeight.Bold)
+        } }
+    }
+    val annualSeconds = entries.filter { dateFromSwift(it.optDouble("start")).year == year }.groupBy { dateFromSwift(it.optDouble("start")) }.entries.sumOf { (day, items) -> employeeDaySeconds(items, day).toDouble() }
+    Text("Jahressumme: " + formatDuration(annualSeconds), fontWeight = FontWeight.Bold)
+    OutlinedButton(onClick = onOpenAbsence, modifier = Modifier.fillMaxWidth()) { Text("Urlaub, Krankheit oder Überstundenabbau eintragen") }
+}
+
+@Composable
+private fun TimeAbsenceForm(repo: AlboRepository, onChanged: () -> Unit) {
+    var type by rememberSaveable { mutableStateOf("Urlaub") }
+    var from by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
+    var until by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
+    var hours by rememberSaveable { mutableStateOf("4") }
+    var note by rememberSaveable { mutableStateOf("") }
+    var message by rememberSaveable { mutableStateOf("") }
+    Text("Abwesenheit eintragen", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        listOf("Urlaub", "Krankmeldung", "Überstundenabbau").forEach { option -> if (type == option) Button(onClick = { type = option }) { Text(option) } else OutlinedButton(onClick = { type = option }) { Text(option) } }
+    }
+    OutlinedTextField(from, { from = it }, label = { Text(if (type == "Überstundenabbau") "Datum (JJJJ-MM-TT)" else "Von (JJJJ-MM-TT)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+    if (type != "Überstundenabbau") OutlinedTextField(until, { until = it }, label = { Text("Bis (JJJJ-MM-TT)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+    if (type == "Überstundenabbau") {
+        OutlinedTextField(hours, { hours = it }, label = { Text("Genommene Stunden") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        OutlinedTextField(note, { note = it }, label = { Text("Notiz (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+    }
+    Button(onClick = {
+        try {
+            val startDate = LocalDate.parse(from)
+            if (type == "Überstundenabbau") {
+                val amount = hours.toDoubleOrNull() ?: error("Bitte eine gültige Stundenzahl eingeben.")
+                require(amount > 0 && amount <= 24 && amount * 4.0 % 1.0 == 0.0) { "Bitte Stunden in Viertelstunden eingeben." }
+                require(amount * 3600 <= yearOvertime(repo).first + 0.01) { "Der Überstundenstand reicht für diesen Abbau nicht aus." }
+                repo.addOvertimeUse(from, amount, note)
+            } else {
+                val endDate = LocalDate.parse(until)
+                require(!endDate.isBefore(startDate)) { "Das Enddatum darf nicht vor dem Startdatum liegen." }
+                repo.updateFrom { db -> db.array("absences").put(JSONObject().put("id", java.util.UUID.randomUUID().toString().uppercase()).put("type", type).put("employee", repo.employee).put("start", startDate.atStartOfDay(ZoneId.systemDefault()).toEpochSecond() - 978307200L).put("end", endDate.atTime(23, 59, 59).atZone(ZoneId.systemDefault()).toEpochSecond() - 978307200L).put("status", if (type == "Urlaub") "Beantragt" else "Gemeldet")) }
+            }
+            message = type + " gespeichert."; onChanged()
+        } catch (e: Exception) { message = e.message ?: "Eintrag konnte nicht gespeichert werden." }
+    }, modifier = Modifier.fillMaxWidth()) { Text("Eintrag speichern") }
+    if (message.isNotBlank()) Text(message, color = BrandBlue)
+    val absences = (0 until repo.database.array("absences").length()).mapNotNull { repo.database.optJSONArray("absences")?.optJSONObject(it) }.filter { it.optString("employee") == repo.employee }.sortedByDescending { it.optDouble("start") }
+    val uses = (0 until repo.database.array("overtimeUses").length()).mapNotNull { repo.database.optJSONArray("overtimeUses")?.optJSONObject(it) }.filter { it.optString("employee") == repo.employee }.sortedByDescending { it.optDouble("date") }
+    Text("Meine Einträge", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+    absences.forEach { Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.padding(12.dp)) { Text(it.optString("type"), fontWeight = FontWeight.SemiBold); Text(formatDate(it.optDouble("start")) + " – " + formatDate(it.optDouble("end")) + " · " + it.optString("status"), style = MaterialTheme.typography.bodySmall) } } }
+    uses.forEach { Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) { Text("Überstundenabbau · " + formatDate(it.optDouble("date"))); Text(formatDuration(it.optDouble("hours") * 3600)) } } }
 }
 
 @Composable
@@ -398,6 +617,180 @@ private fun JobEditorDialog(onDismiss: () -> Unit, onSave: (String, String, Stri
     AlertDialog(onDismissRequest = onDismiss, title = { Text("Baustelle anlegen") }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(customer, { customer = it }, label = { Text("Kunde") }); OutlinedTextField(title, { title = it }, label = { Text("Art der Arbeit / Projekt") }); OutlinedTextField(address, { address = it }, label = { Text("Adresse") })
     } }, confirmButton = { TextButton(onClick = { onSave(customer, title, address) }, enabled = customer.isNotBlank() && title.isNotBlank() && address.isNotBlank()) { Text("Speichern") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } })
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProjectWorkspaceDialog(
+    repo: AlboRepository,
+    jobID: String,
+    spoken: String,
+    photos: List<String>,
+    tick: Int,
+    onDismiss: () -> Unit,
+    onSpeak: () -> Unit,
+    onPickPhoto: () -> Unit,
+    onRemovePhoto: (Int) -> Unit,
+    onSave: (String, String, String, String, String, Set<String>, String, String, String, List<String>, JSONArray, String, String, Boolean) -> String
+) {
+    val job = (0 until repo.jobs.length()).mapNotNull { repo.jobs.optJSONObject(it) }.firstOrNull { it.optString("id").equals(jobID, true) }
+    var page by rememberSaveable(jobID) { mutableStateOf("home") }
+    var title by rememberSaveable(jobID) { mutableStateOf(job?.optString("title").orEmpty()) }
+    var reportText by rememberSaveable(jobID) { mutableStateOf("") }
+    var internalNotes by rememberSaveable(jobID) { mutableStateOf("") }
+    var customerName by rememberSaveable(jobID) { mutableStateOf(job?.optString("customer").orEmpty()) }
+    var workerSignature by rememberSaveable(jobID) { mutableStateOf("") }
+    var customerSignature by rememberSaveable(jobID) { mutableStateOf("") }
+    var projectStatus by rememberSaveable(jobID) { mutableStateOf("Projekt abgeschlossen") }
+    var selectedChecks by rememberSaveable(jobID) { mutableStateOf(setOf<String>()) }
+    var selectedPositionData by rememberSaveable(jobID) { mutableStateOf(emptyList<String>()) }
+    val selectedPositions = selectedPositionData.mapNotNull { try { JSONObject(it) } catch (_: Exception) { null } }
+    var catalogKind by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
+    var quantity by remember { mutableStateOf("1") }
+    var expandedText by rememberSaveable { mutableStateOf(false) }
+    var message by rememberSaveable { mutableStateOf("") }
+    var savedReportID by rememberSaveable(jobID) { mutableStateOf("") }
+    var openArchivedReport by remember { mutableStateOf<JSONObject?>(null) }
+    LaunchedEffect(spoken) { if (spoken.isNotBlank()) reportText = if (reportText.isBlank()) spoken else "$reportText\n$spoken" }
+    val clock = repo.database.objectValue("clocks").optJSONObject(repo.employee)
+    val services = repo.database.optJSONArray("services") ?: JSONArray()
+    val materials = repo.database.optJSONArray("materials") ?: JSONArray()
+    val checklists = repo.database.optJSONArray("checklists") ?: JSONArray()
+    val entries = (0 until repo.entries.length()).mapNotNull { repo.entries.optJSONObject(it) }
+        .filter { it.optString("jobID").equals(jobID, true) }.sortedBy { it.optDouble("start") }
+    val reports = (0 until repo.reports.length()).mapNotNull { repo.reports.optJSONObject(it) }
+        .filter { it.optString("jobID").equals(jobID, true) && it.optBoolean("completed") }
+        .sortedByDescending { it.optDouble("date") }
+    val pageLabels = listOf("home" to "Start", "time" to "Zeit", "catalog" to "Katalog", "photos" to "Fotos", "checks" to "Checkliste", "report" to "Bericht", "customer" to "Kunde")
+    val pageIcons = listOf(Icons.Default.Home, Icons.Default.PlayArrow, Icons.Default.Inventory2, Icons.Default.PhotoCamera, Icons.Default.Checklist, Icons.Default.Description, Icons.Default.Draw)
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize(), color = PageBackground) {
+            Column(Modifier.fillMaxSize()) {
+                Row(Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TextButton(onClick = onDismiss) { Text("‹ Verlassen") }
+                    Column(Modifier.weight(1f)) {
+                        Text(job?.optString("title").orEmpty().ifBlank { "Projektbericht" }, fontWeight = FontWeight.Bold, maxLines = 1)
+                        Text(job?.optString("customer").orEmpty(), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    when (page) {
+                        "home" -> {
+                            Text("Projektübersicht", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(job?.optString("customer").orEmpty(), fontWeight = FontWeight.Bold)
+                                Text("Lieferadresse\n" + (if (job?.optBoolean("deliveryAddressDifferent") == true) job.optString("deliveryAddress") else job?.optString("address")).orEmpty())
+                                Text("Art der Arbeit\n" + job?.optString("title").orEmpty())
+                                if (!job?.optString("notes").isNullOrBlank()) Text("Hinweise vom Büro\n${job?.optString("notes")}")
+                            } }
+                            if (clock?.optString("jobID") == jobID) {
+                                Text(if (clock.has("segmentStart")) "Arbeitszeit läuft · ${clockLabel(repo, clock, tick)}" else "Pause · ${clockLabel(repo, clock, tick)}", color = BrandBlue, fontWeight = FontWeight.Bold)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick = { repo.togglePause(); message = if (clock.has("segmentStart")) "Pause gestartet" else "Arbeitszeit fortgesetzt" }) { Text(if (clock.has("segmentStart")) "Pause" else "Weiter") }
+                                    OutlinedButton(onClick = { repo.stop(); message = "Arbeitszeit gespeichert" }) { Text("Stoppen") }
+                                }
+                            } else Button(onClick = { repo.start(jobID); message = "Arbeitszeit für dieses Projekt gestartet" }, modifier = Modifier.fillMaxWidth()) { Text("Arbeitszeit starten") }
+                            if (message.isNotBlank()) Text(message, color = BrandBlue)
+                            OutlinedButton(onClick = { page = "archive" }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Archive, null); Text("  Abgeschlossene Berichte öffnen (${reports.size})") }
+                        }
+                        "archive" -> {
+                            TextButton(onClick = { page = "home" }) { Text("‹ Projektstart") }
+                            Text("Abgeschlossene Berichte", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                            val archived = openArchivedReport
+                            if (archived != null) {
+                                TextButton(onClick = { openArchivedReport = null }) { Text("‹ Zur Berichtsliste") }
+                                Text(archived.optString("title"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                Text(formatDate(archived.optDouble("date")), style = MaterialTheme.typography.bodySmall)
+                                Text("Lieferadresse\n${if (job?.optBoolean("deliveryAddressDifferent") == true) job.optString("deliveryAddress") else job?.optString("address").orEmpty()}")
+                                Text("Status: ${archived.optString("projectStatus")}")
+                                Text(archived.optString("text"))
+                                if (archived.optJSONArray("positions") != null) (0 until archived.optJSONArray("positions").length()).forEach { i -> val p = archived.optJSONArray("positions").optJSONObject(i); if (p != null) Text("${p.optString("kind")}: ${p.optString("name")} × ${p.optDouble("quantity")} ${p.optString("unit")}") }
+                                if (archived.optString("workerSignature").isNotBlank()) SignatureImage(archived.optString("workerSignature"))
+                                if (archived.optString("customerSignature").isNotBlank()) SignatureImage(archived.optString("customerSignature"))
+                                (0 until (archived.optJSONArray("photos")?.length() ?: 0)).forEach { i -> val filename = archived.optJSONArray("photos")?.optJSONObject(i)?.optString("filename").orEmpty(); val encoded = repo.photos.optString(filename); if (encoded.isNotBlank()) { val imageBytes = Base64.decode(encoded, Base64.DEFAULT); val imageBitmap = remember(filename) { BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size) }; if (imageBitmap != null) Image(imageBitmap.asImageBitmap(), contentDescription = "Berichtsfoto", modifier = Modifier.fillMaxWidth().height(220.dp)) } }
+                            } else if (reports.isEmpty()) Text("Für dieses Projekt gibt es noch keine abgeschlossenen Berichte.")
+                            else reports.forEach { r -> Card(Modifier.clickable { openArchivedReport = r }, colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) { Text(r.optString("title"), fontWeight = FontWeight.Bold); Text(formatDate(r.optDouble("date")), style = MaterialTheme.typography.bodySmall); Text(r.optString("text"), maxLines = 3) } } }
+                        }
+                        "time" -> {
+                            Text("Projektzeit", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                            if (clock?.optString("jobID") == jobID) {
+                                Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(if (clock.has("segmentStart")) "Läuft gerade" else "Pausiert", fontWeight = FontWeight.Bold); Text(clockLabel(repo, clock, tick), style = MaterialTheme.typography.headlineMedium, color = BrandBlue); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { repo.togglePause(); message = if (clock.has("segmentStart")) "Pause gestartet" else "Arbeitszeit fortgesetzt" }) { Text(if (clock.has("segmentStart")) "Pause" else "Weiter") }; OutlinedButton(onClick = { repo.stop(); message = "Arbeitszeit gespeichert" }) { Text("Stoppen") } } } }
+                            } else Button(onClick = { repo.start(jobID); message = "Arbeitszeit auf diesem Projekt gestartet" }, modifier = Modifier.fillMaxWidth()) { Text(if (clock == null) "Arbeitszeit starten" else "Zu diesem Projekt wechseln") }
+                            Text("Arbeitszeiten auf diesem Projekt", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            entries.forEach { e -> Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) { Column { Text(e.optString("employee"), fontWeight = FontWeight.SemiBold); Text(formatDate(e.optDouble("start")), style = MaterialTheme.typography.bodySmall) }; Text(formatDuration(e.optDouble("paidSeconds"))) } } }
+                        }
+                        "catalog" -> {
+                            Text("Projektkatalog", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                            OutlinedTextField(query, { query = it }, label = { Text("Katalog durchsuchen") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                            OutlinedTextField(quantity, { quantity = it }, label = { Text("Anzahl") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("services" to "Leistungen", "materials" to "Materialien").forEach { (key, label) -> if (catalogKind == key) Button(onClick = { catalogKind = key }) { Text(label) } else OutlinedButton(onClick = { catalogKind = key }) { Text(label) } } }
+                            val rows = (if (catalogKind == "services") services else materials).let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) } }
+                                .filter { it.optString("name").contains(query, true) }
+                                .filter { item -> val ids = job?.optJSONArray(if (catalogKind == "services") "serviceIDs" else "materialIDs"); ids != null && (0 until ids.length()).any { ids.optString(it) == item.optString("id") } }
+                            if (rows.isEmpty()) Text("Für dieses Projekt sind hier keine passenden Einträge hinterlegt.")
+                            rows.forEach { item -> OutlinedButton(onClick = { val n = quantity.toDoubleOrNull() ?: 1.0; if (n > 0) selectedPositionData = selectedPositionData + JSONObject().put("kind", if (catalogKind == "services") "Leistung" else "Material").put("name", item.optString("name")).put("quantity", n).put("unit", item.optString("unit")).put("price", item.optDouble("price")).toString() }, modifier = Modifier.fillMaxWidth()) { Text("${item.optString("name")} · hinzufügen") } }
+                            selectedPositions.forEach { Text("✓ ${it.optString("kind")}: ${it.optString("name")} × ${it.optDouble("quantity")} ${it.optString("unit")}") }
+                        }
+                        "photos" -> {
+                            Text("Baustellenfotos", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                            Button(onClick = onPickPhoto, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.PhotoCamera, null); Text("  Foto hinzufügen") }
+                            photos.forEachIndexed { i, encoded -> val bytes = remember(encoded) { Base64.decode(encoded, Base64.DEFAULT) }; val bitmap = remember(encoded) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }; if (bitmap != null) Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column { Image(bitmap.asImageBitmap(), contentDescription = "Baustellenfoto", modifier = Modifier.fillMaxWidth().height(220.dp)); TextButton(onClick = { onRemovePhoto(i) }) { Text("Foto entfernen") } } } }
+                        }
+                        "checks" -> {
+                            Text("Checkliste", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                            if (checklists.length() == 0) Text("Noch keine Checklisten synchronisiert.")
+                            (0 until checklists.length()).mapNotNull { checklists.optJSONObject(it) }.forEach { list -> val id = list.optString("id"); val active = id in selectedChecks; OutlinedButton(onClick = { selectedChecks = if (active) selectedChecks - id else selectedChecks + id }, modifier = Modifier.fillMaxWidth()) { Text((if (active) "☑ " else "☐ ") + list.optString("name")) }; if (active) (0 until (list.optJSONArray("items")?.length() ?: 0)).forEach { Text("• ${list.optJSONArray("items")?.optString(it)}", modifier = Modifier.padding(start = 12.dp)) } }
+                        }
+                        "report" -> {
+                            Text("Arbeitsbericht", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                            OutlinedTextField(title, { title = it }, label = { Text("Überschrift") }, modifier = Modifier.fillMaxWidth())
+                            Box(Modifier.fillMaxWidth().height(150.dp)) { OutlinedTextField(reportText, {}, label = { Text("Durchgeführte Arbeiten · antippen zum Vergrößern") }, readOnly = true, modifier = Modifier.fillMaxSize(), minLines = 4); Box(Modifier.matchParentSize().clickable { expandedText = true }) }
+                            OutlinedButton(onClick = onSpeak) { Icon(Icons.Default.Mic, null); Text("  Diktieren") }
+                            OutlinedTextField(internalNotes, { internalNotes = it }, label = { Text("Interne Notizen · nur Verwaltung") }, modifier = Modifier.fillMaxWidth().height(100.dp))
+                            if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.error)
+                            Button(onClick = { page = "customer" }, modifier = Modifier.fillMaxWidth()) { Text("Zur Kundenansicht") }
+                        }
+                        "customer" -> {
+                            Text("Kundenansicht", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                            Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(job?.optString("title").orEmpty(), fontWeight = FontWeight.Bold)
+                                Text(job?.optString("customer").orEmpty())
+                                Text("Lieferadresse: " + (if (job?.optBoolean("deliveryAddressDifferent") == true) job.optString("deliveryAddress") else job?.optString("address")).orEmpty())
+                                Text("Projektzeit gesamt: " + formatDuration(entries.sumOf { it.optDouble("paidSeconds") } + if (clock?.optString("jobID") == jobID) clockSeconds(repo, clock) else 0.0))
+                                entries.groupBy { it.optString("employee") }.forEach { (person, rows) -> Text("$person · ${formatDuration(rows.sumOf { it.optDouble("paidSeconds") })}") }
+                                Text("Bericht", fontWeight = FontWeight.Bold)
+                                Text(reportText.ifBlank { "Berichtstext noch nicht eingetragen." })
+                                Text("Status", fontWeight = FontWeight.Bold)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Projekt abgeschlossen", "Folgetermin notwendig").forEach { if (projectStatus == it) Button(onClick = { projectStatus = it }) { Text(it) } else OutlinedButton(onClick = { projectStatus = it }) { Text(it) } } }
+                                if (selectedPositions.isNotEmpty()) { Text("Leistungen und Material", fontWeight = FontWeight.Bold); selectedPositions.forEach { Text("${it.optString("kind")}: ${it.optString("name")} × ${it.optDouble("quantity")} ${it.optString("unit")}") } }
+                                selectedChecks.forEach { checkID -> val c = (0 until checklists.length()).mapNotNull { checklists.optJSONObject(it) }.firstOrNull { it.optString("id") == checkID }; if (c != null) Text("Checkliste: ${c.optString("name")}") }
+                            } }
+                            OutlinedTextField(customerName, { customerName = it }, label = { Text("Kundenname") }, modifier = Modifier.fillMaxWidth())
+                            SignaturePad("Unterschrift Monteur", workerSignature, { workerSignature = it })
+                            SignaturePad("Unterschrift Kunde", customerSignature, { customerSignature = it })
+                            if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.error)
+                            OutlinedButton(onClick = { if (title.isBlank() || reportText.isBlank()) message = "Überschrift und Berichtstext fehlen." else { savedReportID = onSave(jobID, title, reportText, internalNotes, "", selectedChecks, customerName, workerSignature, customerSignature, photos, JSONArray(selectedPositions.map { JSONObject(it.toString()) }), projectStatus, savedReportID, false); message = "Entwurf gespeichert. Du kannst weiterbearbeiten." } }, modifier = Modifier.fillMaxWidth()) { Text("Als Entwurf speichern") }
+                            Button(onClick = { if (title.isBlank() || reportText.isBlank()) message = "Überschrift und Berichtstext fehlen." else if (customerName.isBlank() || workerSignature.isBlank() || customerSignature.isBlank()) message = "Für den Abschluss braucht es Kundennamen und beide Unterschriften." else { onSave(jobID, title, reportText, internalNotes, "", selectedChecks, customerName, workerSignature, customerSignature, photos, JSONArray(selectedPositions.map { JSONObject(it.toString()) }), projectStatus, savedReportID, true); savedReportID = "" } }, modifier = Modifier.fillMaxWidth()) { Text("Bericht abschließen") }
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    pageLabels.forEachIndexed { i, (key, label) -> androidx.compose.material3.NavigationBarItem(selected = page == key, onClick = { page = key }, icon = { Icon(pageIcons[i], contentDescription = label) }, label = { Text(label, maxLines = 1) }) }
+                }
+            }
+        }
+    }
+    if (expandedText) Dialog(onDismissRequest = { expandedText = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize().padding(10.dp), shape = RoundedCornerShape(18.dp), color = Color.White) {
+            Column(Modifier.fillMaxSize().navigationBarsPadding().imePadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text("Durchgeführte Arbeiten", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); TextButton(onClick = { expandedText = false }) { Text("Schließen") } }
+                OutlinedTextField(reportText, { reportText = it }, label = { Text("Berichtstext") }, modifier = Modifier.fillMaxWidth().weight(1f), minLines = 12)
+                Button(onClick = { expandedText = false }, modifier = Modifier.fillMaxWidth()) { Text("Text übernehmen") }
+            }
+        }
+    }
 }
 
 @Composable
@@ -499,6 +892,8 @@ private fun ReportEditorDialog(repo: AlboRepository, initialJobID: String, spoke
 private fun SignaturePad(label: String, value: String, onSave: (String) -> Unit) {
     val paths = remember { mutableStateListOf<MutableList<Offset>>() }
     var size by remember { mutableStateOf(IntSize.Zero) }
+    val existingBitmap = remember(value) { try { val bytes = Base64.decode(value, Base64.DEFAULT); BitmapFactory.decodeByteArray(bytes, 0, bytes.size) } catch (_: Exception) { null } }
+    LaunchedEffect(paths.size, size, paths.sumOf { it.size }) { if (paths.isNotEmpty() && size.width > 0 && size.height > 0) onSave(encodeSignature(paths.toList(), size.width, size.height)) }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, fontWeight = FontWeight.SemiBold)
         Canvas(Modifier.fillMaxWidth().height(110.dp).background(Color.White).onSizeChanged { size = it }.pointerInput(Unit) {
@@ -507,6 +902,7 @@ private fun SignaturePad(label: String, value: String, onSave: (String) -> Unit)
                 if (paths.isNotEmpty()) { val current = paths.last().toMutableList(); current.add(change.position); paths[paths.lastIndex] = current }
             })
         }) {
+            existingBitmap?.let { drawImage(it.asImageBitmap(), dstSize = IntSize(size.width, size.height)) }
             paths.forEach { points ->
                 val path = Path()
                 points.firstOrNull()?.let { path.moveTo(it.x, it.y) }
@@ -543,6 +939,12 @@ private fun jobName(repo: AlboRepository, jobID: String): String {
     if (jobID.isBlank() || jobID == "null") return "Werkstatt"
     return (0 until repo.jobs.length()).mapNotNull { repo.jobs.optJSONObject(it) }.firstOrNull { it.optString("id").equals(jobID, true) }?.let { "${it.optString("customer")} · ${it.optString("title")}" } ?: "Baustelle"
 }
+private fun isProjectCompleted(repo: AlboRepository, job: JSONObject): Boolean {
+    val latest = (0 until repo.reports.length()).mapNotNull { repo.reports.optJSONObject(it) }
+        .filter { it.optString("jobID").equals(job.optString("id"), true) && it.optBoolean("completed") && it.has("projectStatus") }
+        .maxByOrNull { it.optDouble("date") }
+    return if (latest != null) latest.optString("projectStatus") == "Projekt abgeschlossen" else job.optString("status") == "Abgeschlossen"
+}
 private fun customerDisplay(customer: JSONObject): String = customer.optString("companyName").ifBlank { customer.optString("name").ifBlank { listOf(customer.optString("firstName"), customer.optString("lastName")).filter { it.isNotBlank() }.joinToString(" ") } }
 private fun projectSeconds(repo: AlboRepository, jobID: String): Double {
     val saved = (0 until repo.entries.length()).mapNotNull { repo.entries.optJSONObject(it) }.filter { it.optString("jobID").equals(jobID, true) }.sumOf { it.optDouble("paidSeconds", it.optDouble("end") - it.optDouble("start")) }
@@ -555,3 +957,4 @@ private fun clockSeconds(repo: AlboRepository, clock: JSONObject): Double = cloc
 private fun clockLabel(repo: AlboRepository, clock: JSONObject, tick: Int): String { @Suppress("UNUSED_VARIABLE") val redraw = tick; return formatDuration(clockSeconds(repo, clock)) }
 private fun formatDuration(seconds: Double): String { val value = seconds.toLong().coerceAtLeast(0); return String.format(Locale.GERMANY, "%02d:%02d:%02d", value / 3600, (value / 60) % 60, value % 60) }
 private fun formatDate(seconds: Double): String { val millis = ((seconds + 978307200.0) * 1000).toLong(); return SimpleDateFormat("dd.MM.yyyy · HH:mm", Locale.GERMANY).format(Date(millis)) }
+private fun formatClockTime(seconds: Double): String = SimpleDateFormat("HH:mm", Locale.GERMANY).format(Date(((seconds + 978307200.0) * 1000).toLong()))
